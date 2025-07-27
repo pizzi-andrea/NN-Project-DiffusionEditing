@@ -9,10 +9,12 @@ This project will implement the InstructPix2Pix approach [@InstructPix2Pix: Lear
 
 # Resources
 
+### Dataset
+* [Annotated Dataset - 130Gb](https://huggingface.co/datasets/timbrooks/instructpix2pix-clip-filtered) 
 ### Repositorys
 
 * [Pix2Pix Model](https://github.com/timothybrooks/instruct-pix2pix?tab=readme-ov-file)
-* [Concadia Dataset](https://github.com/elisakreiss/concadia)
+* ~~[Concadia Dataset](https://github.com/elisakreiss/concadia)~~
 
 ### Papers
 
