@@ -6,9 +6,13 @@ This project will implement the InstructPix2Pix approach [@InstructPix2Pix: Lear
 
 * Evaluate the model on real user-provided instructions and images (beyond the synthetic training set) and integrate an evaluation metric for edit fidelity vs. prompt (similar to InstructPix2Pix’s zero-shot generalization test).
 
-
+![example 1](imgs/example_1.png)
 # Resources
 
+### Sites
+
+* [CLIP-OpenAI](https://openai.com/index/clip/)
+* [Google Drive](https://drive.google.com/drive/folders/1nN_PahZQgn7OCaNgxR0gQlj6w6TvK7zl?usp=drive_link)
 ### Dataset
 * [Annotated Dataset - 130Gb](https://huggingface.co/datasets/timbrooks/instructpix2pix-clip-filtered) 
 ### Repositorys
@@ -21,8 +25,10 @@ This project will implement the InstructPix2Pix approach [@InstructPix2Pix: Lear
 * [DreamBooth](https://arxiv.org/abs/2208.12242)
 * [S2Edit](https://arxiv.org/abs/2507.04584)
 * [Diffusion Model](https://arxiv.org/abs/2209.00796)
-
+* [CLIP](https://arxiv.org/abs/2103.00020)
 ### Models
 
 * [Stable-diffusion-large](stabilityai/stable-diffusion-3.5-large)
 * [Stable-diffusion-turbo]()
+* [OpenCLip](https://github.com/mlfoundations/open_clip)
+
