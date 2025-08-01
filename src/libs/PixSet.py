@@ -2,8 +2,6 @@ from typing import *
 from torch.utils.data import Dataset
 from datasets import load_dataset
 from pathlib import Path
-import numpy as np
-import cv2 as cv
 class PixSet(Dataset):
 
     def __init__(self, src_dataset:Path|str,size:int, split:Literal['train','val','test'],offset:int=0, transformation:Callable|None = None):
@@ -16,13 +14,13 @@ class PixSet(Dataset):
         
         self.ds = load_dataset(path=str(src_dataset), split=f'{split}[{offset}:{size}]')
         
-        if offset + size > self.ds.dataset_size:
+        if offset + size > self.ds.dataset_size: # type: ignore
             raise IndexError
         
     def __len__(self):
-        return len(self.ds)
+        return len(self.ds) # type: ignore
     
-    def get_hf_dataset(self):
+    def get_hf_dataset(self) -> Any:
         return self.ds
     
 
