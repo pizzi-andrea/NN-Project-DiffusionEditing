@@ -9,7 +9,7 @@ from diffusers.quantizers.quantization_config import BitsAndBytesConfig
 # "stabilityai/stable-diffusion-3.5-large-turbo"
 # stabilityai/sdxl-turbo
 
-generator = DiTest("stabilityai/stable-diffusion-3.5-medium", guidance_scale=3, num_step=25, strength=1.0)  # crea un'istanza della classe DiTest
+generator = DiTest("stabilityai/sdxl-turbo", guidance_scale=8, num_step=25, strength=0.9)  # crea un'istanza della classe DiTest
 
 parser = ArgumentParser(description="input")
 if __name__ == "__main__":

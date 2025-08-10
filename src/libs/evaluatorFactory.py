@@ -1,11 +1,11 @@
 from ast import Call
 from typing import Callable
-from metrics.BERTScore import compute_BertScore
-from metrics.Bleu import compute_bleu
-from metrics.RougeScore import compute_rouge
-from metrics.Meteor import compute_meteor
+from .metrics.BERTScore import compute_BertScore
+from .metrics.Bleu import compute_bleu
+from .metrics.RougeScore import compute_rouge
+from .metrics.Meteor import compute_meteor
 from transformers import AutoTokenizer
-from processing import *
+from .processing import *
 def compute_metrics_factory(model_id:str, metrics_calls:list[Callable]=[compute_BertScore, compute_bleu, compute_rouge, compute_meteor]) -> Callable:
     """
     *'Light'* factory class implemented like function. The factory produce 'Callable'

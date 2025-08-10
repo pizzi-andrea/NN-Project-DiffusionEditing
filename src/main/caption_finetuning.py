@@ -4,15 +4,22 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments,
 from peft import get_peft_model, LoraConfig, TaskType
 import torch
 from ..libs.mistralLoraTrainer import MistralLoraTrainer
+from ..libs.evaluatorFactory import compute_metrics_factory
+from ..libs.metrics.Meteor import compute_meteor
+from ..libs.metrics.RougeScore import compute_rouge
+from ..libs.metrics.Bleu import compute_bleu
 
 if __name__ == "__main__":
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    metrics = compute_metrics_factory("mistralai/Mistral-7B-v0.3")
 
     trainer = MistralLoraTrainer(
-        model_name="mistralai/Mistral-7B-v0.1",
-        dataset_path="L_spixset/train",
+        model_name="mistralai/Mistral-7B-v0.3",
+        dataset_path="dataset/L_spixset",
         device=DEVICE,
-        max_length=128
+        max_length=128,
+        metrics_callback=metrics
     )
 
     trainer.apply_lora(r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1)
@@ -24,7 +31,7 @@ if __name__ == "__main__":
 
     validation_dataset = trainer.validation_dataset
 
-    for i in range(10):
+    for i in range(len(validation_dataset)):
       print(f"--------- PRINTING SENTENCE {i+1} ---------")
       prompt = validation_dataset[i]['original_prompt'] + "\n##\n"
       print(f"initial sentence -> {prompt}")

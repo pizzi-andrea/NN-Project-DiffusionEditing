@@ -15,12 +15,14 @@ This project will implement the InstructPix2Pix approach [@InstructPix2Pix: Lear
 * [Google Drive](https://drive.google.com/drive/folders/1nN_PahZQgn7OCaNgxR0gQlj6w6TvK7zl?usp=drive_link)
 
 * [Work with Diffusers library](https://huggingface.co/docs/diffusers/using-diffusers/img2img)
+
 ### Dataset
 * [Annotated Dataset - 130Gb](https://huggingface.co/datasets/timbrooks/instructpix2pix-clip-filtered) 
 ### Repositorys
 
 * [Pix2Pix Model](https://github.com/timothybrooks/instruct-pix2pix?tab=readme-ov-file)
 * ~~[Concadia Dataset](https://github.com/elisakreiss/concadia)~~
+* [Diffusers](https://github.com/huggingface/diffusers)
 
 ### Papers
 

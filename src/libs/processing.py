@@ -23,6 +23,8 @@ def decode_predictions_and_labels(eval_preds, tokenizer):
     else:
         current_preds_ids = current_preds
 
+    if not tokenizer.pad_token_id:
+        tokenizer.pad_token_id = 0
     # Remove null ids
     processed_label_ids = np.where(label_ids != -100, label_ids, tokenizer.pad_token_id)
     # decode into chars
