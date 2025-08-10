@@ -11,27 +11,13 @@ from datasets import load_from_disk, DatasetDict
 import torch
 
 
-from datasets import load_from_disk
-from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    TrainingArguments,
-    Trainer,
-    DataCollatorForLanguageModeling
-)
-from peft import get_peft_model, LoraConfig, TaskType
-from datasets import load_from_disk, DatasetDict
-import torch
-
-
 class MistralLoraTrainer:
     def __init__(self, model_name, dataset_path, device, max_length=128):
         self.model_name = model_name
         self.device = device
         self.max_length = max_length
 
-        self.dataset = None
-        self.load_dataset(dataset_path)
+        self.dataset = self.load_dataset(dataset_path)
 
         self.train_dataset = self.dataset["train"]
         self.test_dataset = self.dataset["test"]
@@ -46,12 +32,13 @@ class MistralLoraTrainer:
             device_map=device
         )
 
-    def load_dataset(self, datset_path, limit=1000):
-        self.dataset = DatasetDict({
-            "train": load_from_disk(datset_path).select(range(limit)),
-            "test": load_from_disk(datset_path),
-            "validation": load_from_disk(datset_path)
+    def load_dataset(self, dataset_path, limit=1000):
+        dataset = DatasetDict({
+            "train": load_from_disk(dataset_path+"/train").select(range(2000)),
+            "test": load_from_disk(dataset_path+"/test"),
+            "validation": load_from_disk(dataset_path+"/validation")
         })
+        return dataset
 
     def apply_lora(self, r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1):
         lora_config = LoraConfig(
@@ -114,5 +101,3 @@ class MistralLoraTrainer:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         outputs = self.model.generate(**inputs, max_length=100, pad_token_id=self.tokenizer.eos_token_id)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
