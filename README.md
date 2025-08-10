@@ -13,6 +13,8 @@ This project will implement the InstructPix2Pix approach [@InstructPix2Pix: Lear
 
 * [CLIP-OpenAI](https://openai.com/index/clip/)
 * [Google Drive](https://drive.google.com/drive/folders/1nN_PahZQgn7OCaNgxR0gQlj6w6TvK7zl?usp=drive_link)
+
+* [Work with Diffusers library](https://huggingface.co/docs/diffusers/using-diffusers/img2img)
 ### Dataset
 * [Annotated Dataset - 130Gb](https://huggingface.co/datasets/timbrooks/instructpix2pix-clip-filtered) 
 ### Repositorys
