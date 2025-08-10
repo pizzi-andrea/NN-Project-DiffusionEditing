@@ -1,0 +1,118 @@
+from datasets import load_from_disk
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForLanguageModeling
+)
+from peft import get_peft_model, LoraConfig, TaskType
+from datasets import load_from_disk, DatasetDict
+import torch
+
+
+from datasets import load_from_disk
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForLanguageModeling
+)
+from peft import get_peft_model, LoraConfig, TaskType
+from datasets import load_from_disk, DatasetDict
+import torch
+
+
+class MistralLoraTrainer:
+    def __init__(self, model_name, dataset_path, device, max_length=128):
+        self.model_name = model_name
+        self.device = device
+        self.max_length = max_length
+
+        self.dataset = None
+        self.load_dataset(dataset_path)
+
+        self.train_dataset = self.dataset["train"]
+        self.test_dataset = self.dataset["test"]
+        self.validation_dataset = self.dataset["validation"]
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            device_map=device
+        )
+
+    def load_dataset(self, datset_path, limit=1000):
+        self.dataset = DatasetDict({
+            "train": load_from_disk(datset_path).select(range(limit)),
+            "test": load_from_disk(datset_path),
+            "validation": load_from_disk(datset_path)
+        })
+
+    def apply_lora(self, r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1):
+        lora_config = LoraConfig(
+            r=r,
+            lora_alpha=alpha,
+            target_modules=target_modules,
+            lora_dropout=dropout,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM
+        )
+        self.model = get_peft_model(self.model, lora_config)
+        self.model.to(self.device)
+
+    def preprocess(self, example):
+        prompt = example["original_prompt"] + "\n##\n"
+        completion = example["edit_prompt"] + "\n%%\n" + example["edited_prompt"] + "\nEND"
+        inputs = self.tokenizer(
+            prompt + completion,
+            truncation=True,
+            padding="max_length",
+            max_length=self.max_length
+        )
+        return {
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs["attention_mask"]
+        }
+
+
+
+    def train(self, output_dir="./mistral-lora-output", epochs=3, batch_size=8, lr=2e-4):
+        self.tokenized_train_dataset = self.train_dataset.map(self.preprocess,
+                                                              remove_columns=["original_prompt", "edit_prompt", "edited_prompt"])
+
+        training_args = TrainingArguments(
+            output_dir=output_dir,
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=8,
+            num_train_epochs=epochs,
+            learning_rate=lr,
+            logging_steps=10,
+            save_strategy="epoch",
+            fp16=True,
+            remove_unused_columns=False,
+            report_to="none"
+        )
+
+        data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
+
+        trainer = Trainer(
+            model=self.model,
+            args=training_args,
+            train_dataset=self.tokenized_train_dataset, # Use tokenized dataset
+            processing_class=self.tokenizer, # Use processing_class instead of tokenizer
+            data_collator=data_collator
+        )
+
+        trainer.train()
+
+    def generate(self, prompt):
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        outputs = self.model.generate(**inputs, max_length=100, pad_token_id=self.tokenizer.eos_token_id)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
