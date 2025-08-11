@@ -1,47 +1,67 @@
+import torch
+
 from datasets import load_from_disk
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
-    DataCollatorForLanguageModeling
+    DataCollatorForLanguageModeling,
+    BitsAndBytesConfig
 )
+
 from peft import get_peft_model, LoraConfig, TaskType
-from datasets import load_from_disk, load_dataset, DatasetDict
-import torch
+from datasets import load_from_disk, DatasetDict
+
 
 
 class MistralLoraTrainer:
-    def __init__(self, model_name, dataset_path, device, max_length=128, enabled_split=["train","test","validation"], metrics_callback=None):
+    """
+    Wrapper class for Mistral AI models traning with Lora Quantization method
+    """
+    def __init__(self, model_name, dataset_path, device, max_length=128, enabled_split=["train","test","validation"], aggresive_quantization=True, metrics_callback=None):
+        
         self.model_name = model_name
         self.device = device
         self.max_length = max_length
         self.metrics_callback = metrics_callback
         self.split = enabled_split
         
-
-        from transformers import BitsAndBytesConfig
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,  # or torch.float16 if bfloat16 not supported
-        )
+        if aggresive_quantization:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16,  # or torch.float16 if bfloat16 not supported
+            )
+        else:
+            bnb_config = None
+        
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self._load_dataset(dataset_path, 2000)
+        self._load_dataset(dataset_path, 0.25)
         self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", quantization_config=bnb_config)
         
 
-    def _load_dataset(self, dataset_path, limit=1000):
+    def _load_dataset(self, dataset_path, limit=1.0):
+
+        if limit > 1 or limit <= 0:
+            raise ValueError("Limitation factor bust be between 0 and 1")
+        
+        
+        
         ds = {split:load_from_disk(dataset_path+'/'+split) for split in self.split}
         self.dataset = DatasetDict(ds)
 
-        self.train_dataset = self.dataset["train"].select(range(limit))
-        self.validation_dataset = self.dataset["validation"].select(range(limit//2))
+        if limit < 1:
+            print(f"load %{limit*100} of train dataset: {int(len(self.dataset["train"])*limit)} items")
+            print(f"load %{limit*100} of validation dataset: {int(len(self.dataset["validation"])*limit)} items")
+
+        self.train_dataset = self.dataset["train"].select(range( int(len(self.dataset["train"])*limit)))
+        self.validation_dataset = self.dataset["validation"].select(range(int(len(self.dataset["validation"])*limit)))
                 
 
     def apply_lora(self, r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1):
@@ -86,13 +106,13 @@ class MistralLoraTrainer:
             gradient_accumulation_steps=8,
             num_train_epochs=epochs,
             learning_rate=lr,
-            logging_steps=10,
+            #logging_steps=10,
             save_strategy="epoch",
             eval_strategy="epoch",
             fp16=True,
             remove_unused_columns=False,
             report_to="none",
-            eval_accumulation_steps=1  # forza scarico frequente su CPU
+            eval_accumulation_steps=1  # force metrics computation on cpu
         )
 
         data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
