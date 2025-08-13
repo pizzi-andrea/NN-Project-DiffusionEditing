@@ -35,18 +35,6 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
-def save_model_hook(accelerator,models, weights, output_dir, ema=None):
-        if accelerator.is_main_process:
-            if ema:
-                ema.save_pretrained(output_dir.joinpath("unet_ema"))
-
-            for _, model in enumerate(models):
-                model.save_pretrained(output_dir.joinpath("unet"))
-
-                # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
-
-
 def unwrap_model(model, accelerator):
         model = accelerator.unwrap_model(model)
         model = model._orig_mod if is_compiled_module(model) else model
@@ -137,7 +125,7 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
             a_val_img.save(os.path.join(val_save_dir, f"step_{global_step}_val_img_{val_img_idx}.png"))
 
 # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_prompt_xl(text_encoders, tokenizers, prompt, logger=None):
+def encode_prompt(text_encoders, tokenizers, prompt, logger=None):
     prompt_embeds_list = []
 
     for tokenizer, text_encoder in zip(tokenizers, text_encoders):
@@ -181,12 +169,12 @@ def encode_prompt_xl(text_encoders, tokenizers, prompt, logger=None):
     return prompt_embeds, pooled_prompt_embeds
 
 # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-def encode_prompts_xl(text_encoders, tokenizers, prompts):
+def encode_prompts(text_encoders, tokenizers, prompts):
     prompt_embeds_all = []
     pooled_prompt_embeds_all = []
 
     for prompt in prompts:
-        prompt_embeds, pooled_prompt_embeds = encode_prompt_xl(text_encoders, tokenizers, prompt)
+        prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt)
         prompt_embeds_all.append(prompt_embeds)
         pooled_prompt_embeds_all.append(pooled_prompt_embeds)
 
@@ -195,9 +183,9 @@ def encode_prompts_xl(text_encoders, tokenizers, prompts):
 # Adapted from examples.dreambooth.train_dreambooth_lora_sdxl
 # Here, we compute not just the text embeddings but also the additional embeddings
 # needed for the SD XL UNet to operate.
-def compute_embeddings_for_prompts_xl(accelerator, prompts, text_encoders, tokenizers):
+def compute_embeddings_for_prompts(accelerator, prompts, text_encoders, tokenizers):
     with torch.no_grad():
-        prompt_embeds_all, pooled_prompt_embeds_all = encode_prompts_xl(text_encoders, tokenizers, prompts)
+        prompt_embeds_all, pooled_prompt_embeds_all = encode_prompts(text_encoders, tokenizers, prompts)
         add_text_embeds_all = pooled_prompt_embeds_all
 
         prompt_embeds_all = prompt_embeds_all.to(accelerator.device)
@@ -205,23 +193,3 @@ def compute_embeddings_for_prompts_xl(accelerator, prompts, text_encoders, token
     return prompt_embeds_all, add_text_embeds_all
 
 
-def _preprocess_train(accelerator, examples, resolution, original_image_column, edited_image_column, edit_prompt_column, text_encoders, tokenizers, callable_for_images=None):
-        # Preprocess images.
-        preprocessed_images = preprocess_images(examples, resolution, original_image_column, edited_image_column, callable_for_images)
-        # Since the original and edited images were concatenated before
-        # applying the transformations, we need to separate them and reshape
-        # them accordingly.
-        original_images, edited_images = preprocessed_images
-        original_images = original_images.reshape(-1, 3, resolution, resolution)
-        edited_images = edited_images.reshape(-1, 3, resolution, resolution)
-
-        # Collate the preprocessed images into the `examples`.
-        examples["original_pixel_values"] = original_images
-        examples["edited_pixel_values"] = edited_images
-
-        # Preprocess the captions.
-        captions = list(examples[edit_prompt_column])
-        prompt_embeds_all, add_text_embeds_all = compute_embeddings_for_prompts_xl(accelerator, captions, text_encoders, tokenizers)
-        examples["prompt_embeds"] = prompt_embeds_all
-        examples["add_text_embeds"] = add_text_embeds_all
-        return examples

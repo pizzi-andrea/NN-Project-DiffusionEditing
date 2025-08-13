@@ -22,6 +22,12 @@ def parse_args():
         ),
     )
 
+    parser.add_argument(
+        "--quantization",
+        type=bool,
+        default=False,
+        help="Enable aggresive quantization for traning"
+    )
     # args for custom dataset
     parser.add_argument(
         "--original_image_column",
@@ -171,6 +177,17 @@ def parse_args():
         help=(
             "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
+        ),
+    )
+
+    # validation epochs
+    parser.add_argument(
+        "--validation_epochs",
+        type=int,
+        default=1,
+        help=(
+            "Run fine-tuning validation every X epochs. The validation process consists of running the prompt"
+            " `args.validation_prompt` multiple times: `args.num_validation_images`."
         ),
     )
 
