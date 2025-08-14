@@ -45,7 +45,7 @@ from diffusers.optimization import get_scheduler
 from diffusers import StableDiffusionInstructPix2PixPipeline
 
 from diffusers.training_utils import EMAModel
-from train_utils import compute_embeddings_for_prompts, load_model_hook, log_validation, preprocess_images, import_model_class_from_model_name_or_path, unwrap_model
+from train_utils import compute_embeddings_for_prompts, load_model_hook, log_validation, preprocess_images, unwrap_model, instance_txt_encoder
 from args_parser import parse_args
 from datasets import load_from_disk
 
@@ -177,6 +177,8 @@ def train():
                     # make sure to pop weight so that corresponding model is not saved again
                     if weights:
                         weights.pop()
+    
+    
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -258,44 +260,18 @@ def train():
     # load tokenizer for conditional prompt
     # note: each diffusion model use one or more text encoder in order to ensure a better understanding of the prompt
 
-    # for sdlx-turbo the num of tokenizer is two
-    tokenizer_1 = AutoTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="tokenizer",
-        use_fast=False
-    )
-    #tokenizer_2 = AutoTokenizer.from_pretrained(
-    #    args.pretrained_model_name_or_path,
-    #    subfolder="tokenizer_2",
-    #)
     
-    # for same way two text encoder
-    text_encoder_cls_1 = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path)
-    #text_encoder_cls_2 = import_model_class_from_model_name_or_path(
-    #    args.pretrained_model_name_or_path, subfolder="text_encoder_2"
-    #)
 
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    tokenizers, text_encoders = instance_txt_encoder(args.pretrained_model_name_or_path, device=accelerator.device if quantization_config else "cpu", num_encoders=args.num_encoders, dtype=weight_dtype, quantization_config=quantization_config)
     
-    text_encoder_1 = text_encoder_cls_1.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder"
-    )
-    #text_encoder_2 = text_encoder_cls_2.from_pretrained(
-    #    args.pretrained_model_name_or_path, subfolder="text_encoder_2"
-    #)
-
-    # We ALWAYS pre-compute the additional condition embeddings needed for SDXL
-    # UNet as the model is already big and it uses two text encoders.
-    text_encoder_1.to(accelerator.device, dtype=weight_dtype)
-    #text_encoder_2.to(accelerator.device, dtype=weight_dtype)
-    tokenizers = [tokenizer_1]
-    text_encoders = [text_encoder_1]
 
     # Freeze vae and text_encoders
     vae.requires_grad_(False)
-    text_encoder_1.requires_grad_(False)
-    #text_encoder_2.requires_grad_(False)
+    for i in range(len(text_encoders)):
+        text_encoders[i].requires_grad_(False)
+    
 
     # Set UNet to trainable.
     unet.train()
@@ -446,7 +422,7 @@ def train():
             initial_global_step = 0
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
-            accelerator.load_state(out_dir.joinpath(path) )
+            accelerator.load_state(out_dir.joinpath(path)) # TODO: need fix some problems in callback hook
             global_step = int(path.split("-")[1])
 
             initial_global_step = global_step
@@ -604,9 +580,9 @@ def train():
                     pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(unet, accelerator),
-                        text_encoder=text_encoder_1,
+                        text_encoder=text_encoders[0],
                         #text_encoder_2=text_encoder_2,
-                        tokenizer=tokenizer_1,
+                        tokenizer=tokenizers[0],
                         #tokenizer_2=tokenizer_2,
                         vae=vae,
                         torch_dtype=weight_dtype,
@@ -643,12 +619,13 @@ def train():
 
         pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
-            text_encoder=text_encoder_1,
+            unet=unwrap_model(unet, accelerator),
+            text_encoder=text_encoders[0],
             #text_encoder_2=text_encoder_2,
-            tokenizer=tokenizer_1,
+            tokenizer=tokenizers[0],
             #tokenizer_2=tokenizer_2,
             vae=vae,
-            unet=unwrap_model(unet, accelerator)
+            torch_dtype=weight_dtype,
         )
 
         pipeline.save_pretrained(out_dir)

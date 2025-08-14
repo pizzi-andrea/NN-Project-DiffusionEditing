@@ -28,6 +28,13 @@ def parse_args():
         default=False,
         help="Enable aggresive quantization for traning"
     )
+
+    parser.add_argument(
+        "--num_encoders",
+        type=int,
+        default=2,
+        help="Number of encoders used by model to encode guidance prompt. Old version of SD use only one encoder, modernel implementation incrased this value."
+    )
     # args for custom dataset
     parser.add_argument(
         "--original_image_column",

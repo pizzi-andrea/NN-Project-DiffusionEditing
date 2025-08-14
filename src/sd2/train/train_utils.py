@@ -3,7 +3,7 @@ import numpy as np
 import os
 import torch
 from contextlib import nullcontext
-from transformers import PretrainedConfig
+from transformers import AutoTokenizer, PretrainedConfig
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.utils import load_image
 from diffusers import UNet2DConditionModel
@@ -71,6 +71,36 @@ def tokenize_captions(captions, tokenizer):
         return_tensors="pt",
     )
     return inputs.input_ids
+
+def instance_txt_encoder(model_name_or_path:str, device:str, num_encoders:int, quantization_config=None, dtype=torch.float32) -> tuple[list, list]:
+    
+    tokenizer_1 = AutoTokenizer.from_pretrained(
+        model_name_or_path,
+        subfolder="tokenizer",
+        use_fast=False
+    )
+
+    txt_encoder_cls_1 = import_model_class_from_model_name_or_path(model_name_or_path)
+    txt_encoder_1 = txt_encoder_cls_1.from_pretrained(model_name_or_path, subfolder="text_encoder", torch_dtype=dtype, device_map=device, quantization_config=quantization_config)
+    txt_encoders = [txt_encoder_1]
+    tokenizers = [tokenizer_1]
+
+    for num in range(2, num_encoders+1):
+        str_tokernizer = f"tokenizer_{num}"
+        str_encoder = f"text_encoder_{num}"
+        
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name_or_path,
+            subfolder=str_tokernizer,
+            use_fast=False
+        )
+        txt_encoder = txt_encoder_cls_1.from_pretrained(model_name_or_path, subfolder=str_encoder, torch_dtype=dtype, device_map=device, quantization_config=quantization_config)
+
+        tokenizers.append(tokenizer)
+        txt_encoders.append(txt_encoder)
+
+
+    return tokenizers, txt_encoders
 
 def preprocess_images(examples, resolution, original_image_column, edited_image_column, transforms_callable=None):
         original_images = np.concatenate(
