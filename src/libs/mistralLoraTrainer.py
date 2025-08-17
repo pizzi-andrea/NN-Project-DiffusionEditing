@@ -44,7 +44,25 @@ class MistralLoraTrainer:
 
         self._load_dataset(dataset_path, 0.25)
         self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", quantization_config=bnb_config)
-        
+
+        self.preprocess = self.get_preprocess_callback(self.tokenizer, max_length=self.max_length)
+    
+    @staticmethod
+    def get_preprocess_callback(tokenizer, max_length):
+        def preprocess(example):
+            prompt = example["original_prompt"] + "\n##\n"
+            completion = example["edit_prompt"] + "\n%%\n" + example["edited_prompt"] + "\nEND"
+            inputs = tokenizer(
+                prompt + completion,
+                truncation=True,
+                padding="max_length",
+                max_length=max_length
+            )
+            return {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"]
+            }
+        return preprocess
 
     def _load_dataset(self, dataset_path, limit=1.0):
 
@@ -77,22 +95,6 @@ class MistralLoraTrainer:
         self.model = get_peft_model(self.model, lora_config)
         self.model.to(self.device)
 
-    def preprocess(self, example):
-        prompt = example["original_prompt"] + "\n##\n"
-        completion = example["edit_prompt"] + "\n%%\n" + example["edited_prompt"] + "\nEND"
-        inputs = self.tokenizer(
-            prompt + completion,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length
-        )
-        return {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"]
-        }
-
-
-
     def train(self, output_dir="./mistral-lora-output", epochs=3, batch_size=8, lr=2e-4):
         self.tokenized_train_dataset = self.train_dataset.map(self.preprocess,
                                                               remove_columns=["original_prompt", "edit_prompt", "edited_prompt"])
@@ -112,7 +114,10 @@ class MistralLoraTrainer:
             fp16=True,
             remove_unused_columns=False,
             report_to="none",
-            eval_accumulation_steps=1  # force metrics computation on cpu
+            eval_accumulation_steps=1,  # force metrics computation on cpu
+            load_best_model_at_end=True,
+            save_total_limit=3,
+            metric_for_best_model="rouge1"
         )
 
         data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
@@ -125,9 +130,16 @@ class MistralLoraTrainer:
             processing_class=self.tokenizer, # Use processing_class instead of tokenizer
             data_collator=data_collator,
             compute_metrics=self.metrics_callback,
+            
+            
         )
 
         trainer.train()
+        # load best model
+        self.model = trainer.model
+        self.model.save_pretrained(output_dir+'/'+'best_weigths')
+
+        return self.model
 
     def generate(self, prompt):
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
