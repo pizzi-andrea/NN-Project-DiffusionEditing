@@ -1,6 +1,5 @@
 from typing import Callable, Literal
 import torch 
-import numpy as np
 import open_clip as clip
 
 class ClipWrap:
@@ -59,6 +58,6 @@ class ClipWrap:
             images = (images_emb - img_mean)/img_std
             prompts = (prompts_emb - p_mean)/p_std
 
-            coss = (100.0 * images @ prompts.T).softmax(dim=-1)
+            coss = torch.cosine_similarity(prompts, images, dim=-1)
 
         return [images_emb, prompts_emb, coss]

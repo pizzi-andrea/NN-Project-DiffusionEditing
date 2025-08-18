@@ -2,14 +2,13 @@ import torch
 
 from ..libs.DiTest import DiTest  # importa la classe/funzione dal modulo relativo
 from argparse import ArgumentParser
-from diffusers.quantizers.quantization_config import BitsAndBytesConfig
 
 # Models
 
 # "stabilityai/stable-diffusion-3.5-large-turbo"
 # stabilityai/sdxl-turbo
 
-generator = DiTest("stabilityai/stable-diffusion-3.5-medium", guidance_scale=8, num_step=45, strength=0.73)  # crea un'istanza della classe DiTest
+generator = DiTest("stabilityai/stable-diffusion-2-1", num_step=4)  # crea un'istanza della classe DiTest
 
 parser = ArgumentParser(description="input")
 if __name__ == "__main__":

@@ -1,18 +1,21 @@
-from diffusers import StableDiffusion3Img2ImgPipeline
-from diffusers.quantizers.quantization_config import BitsAndBytesConfig
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
+from diffusers.schedulers.scheduling_dpmsolver_multistep import DPMSolverMultistepScheduler
 import torch
 from pathlib import Path
-from diffusers.utils import load_image
+from diffusers.utils.loading_utils import load_image
 class DiTest:
-    def __init__(self, model_id:str="stabilityai/stable-diffusion-3.5-large", num_step=4, guidance_scale:float = 0.9, strength=0.1) -> None:
+    def __init__(self, model_id:str="stabilityai/stable-diffusion-2", num_step=4, guidance_scale:float = 0.5, strength:float=0) -> None:
         
-        self.main = StableDiffusion3Img2ImgPipeline.from_pretrained(
+        self.main = StableDiffusionPipeline.from_pretrained(
             model_id, 
             torch_dtype=torch.bfloat16, 
-            use_safetensors=True
+            use_safetensors=True,
+            device_map='balanced'
         )
 
-        self.main.enable_model_cpu_offload()
+        self.main.scheduler = DPMSolverMultistepScheduler.from_config(self.main.scheduler.config)
+
+        #self.main.enable_model_cpu_offload()
         self.default_num_step = num_step
         self.default_guidance = guidance_scale
         self.strength = strength
