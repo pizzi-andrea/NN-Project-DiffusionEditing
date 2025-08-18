@@ -5,9 +5,6 @@ from peft import get_peft_model, LoraConfig, TaskType
 import torch
 from ..libs.mistralLoraTrainer import MistralLoraTrainer
 from ..libs.evaluatorFactory import compute_metrics_factory
-from ..libs.metrics.Meteor import compute_meteor
-from ..libs.metrics.RougeScore import compute_rouge
-from ..libs.metrics.Bleu import compute_bleu
 
 if __name__ == "__main__":
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -19,7 +16,8 @@ if __name__ == "__main__":
         dataset_path="dataset/L_spixset",
         device=DEVICE,
         max_length=128,
-        metrics_callback=metrics
+        metrics_callback=metrics,
+        aggresive_quantization=True
     )
 
     trainer.apply_lora(r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1)
@@ -27,7 +25,7 @@ if __name__ == "__main__":
 
     trainer.model.print_trainable_parameters()
 
-    trainer.train()
+    trainer.train(batch_size=4)
 
     validation_dataset = trainer.validation_dataset
 

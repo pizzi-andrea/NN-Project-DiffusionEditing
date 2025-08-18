@@ -1,15 +1,15 @@
 # @title
 from typing import List
+from sympy import im
 import torch
 import matplotlib.pyplot as plt
-from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
-from diffusers import AutoPipelineForText2Image
-from attentionController import AttentionController, run_prompt_to_prompt
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
+from .attentionController import AttentionController, run_prompt_to_prompt
 from ..libs.metrics.Clip import directional_similarity
 import clip
 
 class PromptToPromptGenerator:
-    def __init__(self, stable_diffusion_model, num_inference_steps = 30, device = "cuda"):
+    def __init__(self, stable_diffusion_model:StableDiffusionPipeline, num_inference_steps = 30, device = "cuda"):
         self.device = device
         self.num_inference_steps=num_inference_steps
         self.count = 0 
@@ -22,7 +22,7 @@ class PromptToPromptGenerator:
         self.controller = AttentionController(total_steps=self.num_inference_steps)
         self.CLIP_model, self.CLIP_preprocess = clip.load("ViT-B/32", device=device)
 
-    def generate(self, prompt1, prompt2, p = 0.3, guidance_scale = 7.5, alpha = 0.7, path:str = None, CLIP = True):
+    def generate(self, prompt1, prompt2, p = 0.3, guidance_scale = 7.5, alpha = 0.7, path:str|None = None, CLIP:bool = True):
 
         self.controller.setP(p)
         self.controller.setAlpha(alpha)
@@ -34,7 +34,7 @@ class PromptToPromptGenerator:
                                           guidance_scale,
                                           self.num_inference_steps)
 
-        if path is not None:
+        if path:
             img1.save(path + f"img_base_{self.count}.png")
             img2.save(path + f"img_edited_{self.count}.png")
 
