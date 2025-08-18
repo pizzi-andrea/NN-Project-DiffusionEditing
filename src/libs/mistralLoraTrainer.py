@@ -1,6 +1,4 @@
 import torch
-
-from datasets import load_from_disk
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -19,7 +17,7 @@ class MistralLoraTrainer:
     """
     Wrapper class for Mistral AI models traning with Lora Quantization method
     """
-    def __init__(self, model_name, dataset_path, device, max_length=128, enabled_split=["train","test","validation"], aggresive_quantization=True, metrics_callback=None):
+    def __init__(self, model_name, dataset_path, device, max_length=128, enabled_split=["train","test","validation"], aggresive_quantization=False, metrics_callback=None):
         
         self.model_name = model_name
         self.device = device
@@ -34,16 +32,18 @@ class MistralLoraTrainer:
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16,  # or torch.float16 if bfloat16 not supported
             )
+            map_device = 'auto'
         else:
             bnb_config = None
+            map_device = None
         
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self._load_dataset(dataset_path, 0.25)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", quantization_config=bnb_config)
+        self._load_dataset(dataset_path, 0.01)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map=map_device, quantization_config=bnb_config)
 
         self.preprocess = self.get_preprocess_callback(self.tokenizer, max_length=self.max_length)
     
@@ -75,11 +75,11 @@ class MistralLoraTrainer:
         self.dataset = DatasetDict(ds)
 
         if limit < 1:
-            print(f"load %{limit*100} of train dataset: {int(len(self.dataset["train"])*limit)} items")
-            print(f"load %{limit*100} of validation dataset: {int(len(self.dataset["validation"])*limit)} items")
+            print(f"load %{limit*100} of train dataset: {int(len(self.dataset['train'])*limit)} items")
+            print(f"load %{limit*100} of validation dataset: {int(len(self.dataset['validation'])*limit)} items")
 
-        self.train_dataset = self.dataset["train"].select(range( int(len(self.dataset["train"])*limit)))
-        self.validation_dataset = self.dataset["validation"].select(range(int(len(self.dataset["validation"])*limit)))
+        self.train_dataset = self.dataset['train'].select(range( int(len(self.dataset['train'])*limit)))
+        self.validation_dataset = self.dataset['validation'].select(range(int(len(self.dataset['validation'])*limit)))
                 
 
     def apply_lora(self, r=8, alpha=16, target_modules=["q_proj", "v_proj"], dropout=0.1):
@@ -143,5 +143,5 @@ class MistralLoraTrainer:
 
     def generate(self, prompt):
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(**inputs, max_length=100, pad_token_id=self.tokenizer.eos_token_id)
+        outputs = self.model.generate(**inputs, max_length=200, pad_token_id=self.tokenizer.eos_token_id)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
