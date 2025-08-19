@@ -1,5 +1,5 @@
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
 
 class AttentionController:
     def __init__(self, total_steps:int, p:float=0.7, alpha:float=0.7):
@@ -110,6 +110,7 @@ def run_prompt_to_prompt(
             prompt1,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
+            added_cond_kwargs={},
             callback_on_step_end=cb_save,
         ).images[0]
 
@@ -129,6 +130,7 @@ def run_prompt_to_prompt(
             prompt2,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
+            added_cond_kwargs={},
             callback_on_step_end=cb_replace,
         ).images[0]
 

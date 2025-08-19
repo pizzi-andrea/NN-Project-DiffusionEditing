@@ -3,6 +3,7 @@ from pathlib import Path
 from venv import logger
 import random
 import PIL.Image
+from matplotlib.pyplot import sca
 import torch
 import logging
 import torch
@@ -14,7 +15,9 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import BitsAndBytesConfig
 from diffusers.schedulers.scheduling_dpmsolver_multistep import DPMSolverMultistepScheduler
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
+from diffusers.schedulers.scheduling_euler_ancestral_discrete import EulerAncestralDiscreteScheduler
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
+from diffusers.models.attention_processor import AttnProcessor2_0
 from torch.utils.data import DataLoader
 from .promptToPrompt import PromptToPromptGenerator
 from datasets import Dataset, Features, Value
@@ -102,7 +105,8 @@ class Pix2Pix_DatasetFactory:
         llm = AutoModelForCausalLM.from_pretrained(self.llm_weights, 
             torch_dtype=weights_type, 
             device_map=device, 
-            quantization_config=bnb_config)
+            quantization_config=bnb_config,
+            attn_implementation="sdpa")
         outputs = []
         tokenizer = AutoTokenizer.from_pretrained(self.llm_weights)
         
@@ -175,7 +179,7 @@ class Pix2Pix_DatasetFactory:
         return [(o, e) for (o, e) in zip(dataset['original_prompt'], edited_prompt)]
     
 
-    def generate_pair_images(self, prompts:list[tuple[str,str]]|str|Path|DatasetDict, original_prompt:str="original_prompt", edited_prompt:str="edited_prompt", steps:int=4, alpha:float=0.7, scale:float=7.5,device:str='cpu', resolution:tuple[int,int]=(512,512), tr:int=3, eval_step:int=2, save_name:str|None = None) -> list[tuple[PIL.Image, str, PIL.Image]]:
+    def generate_pair_images(self, prompts:list[tuple[str,str]]|str|Path|DatasetDict, original_prompt:str="original_prompt", edited_prompt:str="edited_prompt", steps:int=4, alpha:float=0.7, scale:float=7.5,device:str='cpu', compile:bool=False, tr:int=3, eval_step:int=2, save_name:str|None = None) -> list[tuple[PIL.Image, str, PIL.Image]]:
         # parse src of prompts
         if isinstance(prompts, (str,Path)):
             dataset = load_from_disk(prompts).select_columns([original_prompt, edited_prompt])
@@ -197,8 +201,15 @@ class Pix2Pix_DatasetFactory:
         #})
 
 
-        pipe = StableDiffusionPipeline.from_pretrained(self.diffusion_id, torch_dtype=torch.bfloat16)        
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+        pipe = StableDiffusionPipeline.from_pretrained(self.diffusion_id, torch_dtype=torch.bfloat16)
+        
+
+        if compile and getattr(pipe, "unet", None):
+            pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
+
+
+        pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
+        pipe.enable_model_cpu_offload()
         
         p2p = PromptToPromptGenerator(pipe, num_inference_steps=steps, device=device)
 
@@ -228,7 +239,12 @@ class Pix2Pix_DatasetFactory:
                     bst_img2 = img2
             
             if idx % eval_step == 0:
-                save_pair_with_label(bst_img1, bst_img2, f"original_prompt:{original}'\n'edited_prompt:{edited}",self.base_path.joinpath(f"sample-{idx}.png") )
+                save_pair_with_label(
+                    bst_img1, 
+                    bst_img2, 
+                    f"original_prompt:{original}'\n'edited_prompt:{edited}",
+                    self.base_path.joinpath(f"sample-{idx}.png") 
+                )
                 self.logger.info("log pairs image in:%s", str(self.base_path.absolute()))
             
             original_imgs.append(bst_img1)
@@ -278,19 +294,24 @@ class Pix2Pix_DatasetFactory:
 
     def generate_new_dataset(self, num_samples:int, columns_prompt:str="original_prompt", save_mid_steps:bool=False, device:str='cpu', batch_s:int=8) -> DatasetDict:
         self.new_dataset:DatasetDict|None = None
-        edit_name = None 
+        edit_name = None
+        pairs_name = None
         
         if save_mid_steps:
             edit_name = "edited_prompts"
+            pairs_name = "images"
         edited_prompts = self.generate_edit_prompts(num_samples, columns_prompt, device, batch_s, edit_name)
-        self.generate_pair_images(edited_prompts, device=device, save_name=edit_name)
+        self.generate_pair_images(edited_prompts, device=device, save_name=pairs_name, steps=24, tr=10, alpha=0.8, scale=8.0)
+       
 
         return self.new_dataset # type: ignore
 
 
 if __name__ == '__main__':
     ds_factory = Pix2Pix_DatasetFactory("dataset/myDataset", "dataset/spixset/test", "weights/mistral", "stabilityai/stable-diffusion-2-base")
-    prompts = ds_factory.generate_edit_prompts(10, device='cuda')
-    ds_factory.generate_pair_images(prompts=prompts, device='cuda')
+    #prompts = ds_factory.generate_edit_prompts(10, device='cuda')
+    #ds_factory.generate_pair_images(prompts=prompts, device='cuda', alpha=0.8, tr=10, steps=10, scale=8)
+    ds = ds_factory.generate_new_dataset(10, device='cuda', batch_s=16)
+    ds.save_to_disk("data")
         
 

@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
 from .attentionController import AttentionController, run_prompt_to_prompt
 from ..libs.metrics.Clip import directional_similarity
-import clip
+#import clip
+import open_clip
 
 class PromptToPromptGenerator:
     def __init__(self, stable_diffusion_model:StableDiffusionPipeline, num_inference_steps = 30, device = "cuda"):
@@ -15,12 +16,12 @@ class PromptToPromptGenerator:
         self.count = 0 
 
         self.pipe = stable_diffusion_model
-        self.pipe = self.pipe.to(self.device)
-        self.pipe.enable_attention_slicing()
+        #self.pipe.enable_attention_slicing("auto") 
         self.pipe.set_progress_bar_config(disable=True)
         
         self.controller = AttentionController(total_steps=self.num_inference_steps)
-        self.CLIP_model, self.CLIP_preprocess = clip.load("ViT-B/32", device=device)
+        #self.CLIP_model, self.CLIP_preprocess = clip.load("ViT-B/32", device=device)
+        self.CLIP_model, _, self.CLIP_preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", device=device, jit=True)
 
     def generate(self, prompt1, prompt2, p = 0.3, guidance_scale = 7.5, alpha = 0.7, path:str|None = None, CLIP:bool = True):
 
