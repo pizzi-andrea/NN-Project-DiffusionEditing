@@ -223,7 +223,7 @@ class Pix2Pix_DatasetFactory:
             for i in range(tr):
                 torch.cuda.empty_cache()
                 p = random.uniform(0.1, 0.9)
-                self.logger.info(f"p = %f", p)
+                
                 img1, img2, score = p2p.generate(original,
                             edited, 
                             p = p,
@@ -237,7 +237,8 @@ class Pix2Pix_DatasetFactory:
                     max_score = score
                     bst_img1 = img1
                     bst_img2 = img2
-            
+
+                self.logger.info(f"p = %f, score=%f", p, score)
             if idx % eval_step == 0:
                 save_pair_with_label(
                     bst_img1, 
@@ -301,17 +302,16 @@ class Pix2Pix_DatasetFactory:
             edit_name = "edited_prompts"
             pairs_name = "images"
         edited_prompts = self.generate_edit_prompts(num_samples, columns_prompt, device, batch_s, edit_name)
-        self.generate_pair_images(edited_prompts, device=device, save_name=pairs_name, steps=24, tr=10, alpha=0.8, scale=8.0)
-       
+        self.generate_pair_images(edited_prompts, device=device, save_name=pairs_name, steps=24, tr=10, alpha=0.8, scale=5.0)
+        self.new_dataset.save_to_disk(self.base_path.joinpath("data")) # type: ignore
 
         return self.new_dataset # type: ignore
 
 
 if __name__ == '__main__':
-    ds_factory = Pix2Pix_DatasetFactory("dataset/myDataset", "dataset/spixset/test", "weights/mistral", "stabilityai/stable-diffusion-2-base")
+    ds_factory = Pix2Pix_DatasetFactory("dataset/myDataset", "dataset/spixset/test", "weights/mistral", "stabilityai/stable-diffusion-2-1-base")
     #prompts = ds_factory.generate_edit_prompts(10, device='cuda')
     #ds_factory.generate_pair_images(prompts=prompts, device='cuda', alpha=0.8, tr=10, steps=10, scale=8)
     ds = ds_factory.generate_new_dataset(10, device='cuda', batch_s=16)
-    ds.save_to_disk("data")
         
 
