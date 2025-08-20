@@ -26,6 +26,7 @@ from pathlib import Path
 
 
 import datasets
+from peft import LoraConfig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -139,6 +140,18 @@ def train():
             args.pretrained_model_name_or_path, subfolder="unet",
             torch_dtype=TORCH_DTYPE_MAPPING[args.mixed_precision]
         )
+    
+    if args.lora:
+        lora_config = LoraConfig(
+            r = 32,
+            lora_alpha=16,
+            lora_dropout=0.0,
+            target_modules=["to_q","to_k","to_v","to_out.0"],
+            inference_mode=False
+        )
+        unet.add_adapter(lora_config, adapter_name='quantizator')
+    
+
 
 
     # InstructPix2Pix uses an additional image for conditioning. To accommodate that,

@@ -222,6 +222,14 @@ def parse_args():
         ),
     )
     
+    parser.add_argument(
+        "--lora",
+        type=bool,
+        default=False,
+        required=False,
+        help="use lora quantization method for unet train"
+    )
+    
 
     args = parser.parse_args()
     
