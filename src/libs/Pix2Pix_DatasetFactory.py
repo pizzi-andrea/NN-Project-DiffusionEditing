@@ -232,7 +232,7 @@ class Pix2Pix_DatasetFactory:
                             #path = "./"
                             )
 
-                if score < max_score:
+                if score > max_score:
                     #print(f"new max score: {score}")
                     max_score = score
                     bst_img1 = img1

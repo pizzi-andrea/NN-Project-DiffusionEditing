@@ -11,6 +11,8 @@ if __name__ == "__main__":
     NUM_INFERENCE_STEPS = 30
     ALPHA = 0.7
     GUIDANCE_SCALE = 7.5
+    
+    NUM_GEN = 20
 
     pipe = StableDiffusionPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float16)
     #pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", torch_dtype=torch.float16, variant="fp16")
@@ -23,7 +25,7 @@ if __name__ == "__main__":
     prompt1 = "a girl riding a horse"
     prompt2 = "a girl riding a cyborg-horse"
 
-    for i in range(3):
+    for i in range(NUM_GEN):
         print(f"--------- PRINTING SENTENCE {i+1} ---------")
         torch.cuda.empty_cache()
         p = random.uniform(0.1, 0.9)
