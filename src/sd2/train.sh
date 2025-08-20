@@ -4,10 +4,10 @@
 # - utilizzare modello compatibili con la libreria diffusers con struttura [model_name]/vae/ e [model_name]/unet/ 
 accelerate launch train/train.py \
     --pretrained_model_name_or_path=stabilityai/sd-turbo \
-    --num_train_epochs=4 \
+    --num_train_epochs=20 \
     --dataset_path=toyset \
     --num_encoders=1 \
-    --output_dir=instruct_pix2pix_sd2 \
+    --output_dir=instruct_pix2pix_sd_turbo \
     --resolution=256 \
     --train_batch_size=8 \
     --gradient_accumulation_steps=8 \

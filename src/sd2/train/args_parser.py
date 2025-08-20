@@ -68,13 +68,13 @@ def parse_args():
     parser.add_argument(
         "--num_validation_images",
         type=int,
-        default=4,
+        default=3,
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
         "--validation_steps",
         type=int,
-        default=100,
+        default=120,
         help=(
             "Run fine-tuning validation every X steps. The validation process consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`."
@@ -109,6 +109,16 @@ def parse_args():
         default=256,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this resolution."
+        ),
+    )
+
+    parser.add_argument(
+        "--preprocessing",
+        type=bool,
+        default=False,
+        required=False,
+        help=(
+            "Applay defult argumentation order in to redice overfitting issues"
         ),
     )
     

@@ -21,7 +21,6 @@ import shutil
 import warnings
 
 from pathlib import Path
-from pathlib import Path
 
 
 
@@ -30,7 +29,6 @@ from peft import LoraConfig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -39,7 +37,7 @@ from transformers import BitsAndBytesConfig
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
-
+import matplotlib.pyplot as plt
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
@@ -58,6 +56,29 @@ DATASET_NAME_MAPPING = {
 }
 
 TORCH_DTYPE_MAPPING = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
+
+
+def plot_loss(loss_history: list[float], save_path: str):
+    """
+    
+    Args:
+        loss_history (list[float]): Lista dei valori di loss per epoca.
+        save_path (str): Cartella in cui salvare il plot.
+    """
+    path = Path(save_path)
+    
+    
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(1, len(loss_history) + 1), loss_history, marker='o', color='blue')
+    plt.title("Loss History")
+    plt.xlabel("Steps")
+    plt.ylabel("Loss")
+    plt.grid(True)
+    
+    file_path = path.joinpath("loss_history.png")
+    plt.savefig(file_path)
+    plt.close()
+
 
 def train():
 
@@ -266,9 +287,16 @@ def train():
 
     # Preprocessing the datasets.
     train_transforms = transforms.Compose([
-             transforms.RandomCrop(args.resolution), transforms.RandomHorizontalFlip()
-        ]
-    )
+                transforms.Lambda(
+                    lambda x: x
+                )
+            ]
+        )
+    if args.preprocessing:
+        train_transforms = transforms.Compose([
+                transforms.RandomCrop(args.resolution), transforms.RandomHorizontalFlip()
+            ]
+        )
 
     
     # load tokenizer for conditional prompt
@@ -379,11 +407,10 @@ def train():
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    if args.quantization:
-        vae.to(accelerator.device)
+   
+    vae.to(accelerator.device)
         
-    else:
-        vae.to(accelerator.device, dtype=weight_dtype)
+    
     
     unet.to(accelerator.device, dtype=weight_dtype)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -452,6 +479,8 @@ def train():
         disable=not accelerator.is_local_main_process,
     )
 
+    history_loss = []
+
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
@@ -484,7 +513,7 @@ def train():
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
 
                 original_pixel_values = batch["original_pixel_values"].to(weight_dtype)
-                original_image_embeds = vae.encode(original_pixel_values).latent_dist.sample()
+                original_image_embeds = vae.encode(original_pixel_values.to(torch.float32)).latent_dist.sample()
                 original_image_embeds = original_image_embeds.to(weight_dtype)
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
@@ -550,9 +579,10 @@ def train():
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                history_loss.append(train_loss)
                 train_loss = 0.0
 
-                if global_step % 100 == 0:
+                if global_step % round(len(train_dataset)/(total_batch_size)) == 0:
                     if accelerator.is_main_process:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         
@@ -576,13 +606,14 @@ def train():
 
                         save_path = os.path.join(out_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
+                        plot_loss(history_loss, save_path)
                         logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
 
             ### BEGIN: Perform validation every `validation_epochs` steps
-            if global_step % 100 == args.validation_steps:
+            if global_step % args.validation_steps == 0 and global_step != 0 and args.validation_steps != 0:
                 if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None) and (epoch % args.validation_epochs == 0):
                     # create pipeline
                     if use_ema:
@@ -595,12 +626,13 @@ def train():
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(unet, accelerator),
                         text_encoder=text_encoders[0],
-                        #text_encoder_2=text_encoder_2,
+                        #text_encoder_2=text_encoders[1],
                         tokenizer=tokenizers[0],
-                        #tokenizer_2=tokenizer_2,
+                        #tokenizer_2=tokenizers[1],
                         vae=vae,
                         torch_dtype=weight_dtype,
                     )
+                    pipeline.enable_model_cpu_offload()
 
                     log_validation(
                         logger,
@@ -635,14 +667,15 @@ def train():
             args.pretrained_model_name_or_path,
             unet=unwrap_model(unet, accelerator),
             text_encoder=text_encoders[0],
-            #text_encoder_2=text_encoder_2,
+            #text_encoder_2=text_encoders[1],
             tokenizer=tokenizers[0],
-            #tokenizer_2=tokenizer_2,
+            #tokenizer_2=tokenizers[1],
             vae=vae,
             torch_dtype=weight_dtype,
         )
 
         pipeline.save_pretrained(out_dir)
+        pipeline.enable_model_cpu_offload()
 
         if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
             log_validation(

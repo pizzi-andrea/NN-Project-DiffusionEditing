@@ -123,7 +123,7 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
         f" {validation_prompt}."
     )
 
-    pipeline = pipeline.to(accelerator.device)
+    #pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
 
     val_save_dir = out_dir.joinpath("validation_images")
@@ -145,9 +145,9 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
             a_val_img = pipeline(
                 validation_prompt,
                 image=original_image,
-                num_inference_steps=42,
-                image_guidance_scale=8.0,
-                guidance_scale=8,
+                num_inference_steps=24,
+                image_guidance_scale=5.0,
+                guidance_scale=5,
                 generator=generator,
             ).images[0]
             edited_images.append(a_val_img)
