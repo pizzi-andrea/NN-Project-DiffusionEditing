@@ -145,9 +145,9 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
             a_val_img = pipeline(
                 validation_prompt,
                 image=original_image,
-                num_inference_steps=20,
-                image_guidance_scale=1.5,
-                guidance_scale=7,
+                num_inference_steps=42,
+                image_guidance_scale=8.0,
+                guidance_scale=8,
                 generator=generator,
             ).images[0]
             edited_images.append(a_val_img)

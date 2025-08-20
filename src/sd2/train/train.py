@@ -125,13 +125,13 @@ def train():
         bnb_4bit_use_double_quant=True, # Abilita la doppia quantizzazione per maggiore precisione
         bnb_4bit_compute_dtype=torch.bfloat16, # Tipo di dato per i calcoli intermedi
         )
+        logger.info("enable pretraned-weights quantization")
 
     
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="vae",
         quantization_config=quantization_config,
-        torch_dtype=TORCH_DTYPE_MAPPING[args.mixed_precision],
     )
 
     # Unet folder
@@ -150,6 +150,7 @@ def train():
             inference_mode=False
         )
         unet.add_adapter(lora_config, adapter_name='quantizator')
+        logger.info("Enable LoRA traning")
     
 
 
@@ -657,7 +658,6 @@ def train():
                     )
 
     accelerator.end_training()
-
 
 if __name__ == "__main__":
     train()

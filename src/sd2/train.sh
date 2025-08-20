@@ -7,7 +7,6 @@ accelerate launch train/train.py \
     --num_train_epochs=4 \
     --dataset_path=toyset \
     --num_encoders=1 \
-    --quantization=True \
     --output_dir=instruct_pix2pix_sd2 \
     --resolution=256 \
     --train_batch_size=8 \
@@ -17,6 +16,5 @@ accelerate launch train/train.py \
     --lr_warmup_steps=0 \
     --mixed_precision=bf16 \
     --val_image_url_or_path=apple2.jpg \
-    --lora=True \
     --validation_prompt="make it a green apple" \
     --seed=42 \
