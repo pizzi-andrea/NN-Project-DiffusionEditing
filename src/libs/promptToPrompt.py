@@ -4,8 +4,10 @@ from sympy import im
 import torch
 import matplotlib.pyplot as plt
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionPipeline
+import torchvision.transforms as transforms
 from .attentionController import AttentionController, run_prompt_to_prompt
 from ..libs.metrics.Clip import directional_similarity
+from ..libs.metrics.Clip import ClipSimilarity
 #import clip
 import open_clip
 
@@ -21,7 +23,9 @@ class PromptToPromptGenerator:
         
         self.controller = AttentionController(total_steps=self.num_inference_steps)
         #self.CLIP_model, self.CLIP_preprocess = clip.load("ViT-B/32", device=device)
-        self.CLIP_model, _, self.CLIP_preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", device=device, jit=True)
+        #self.CLIP_model, _, self.CLIP_preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", device=device, jit=True)
+        self.clip_sim = ClipSimilarity(str = "ViT-B/32")
+        self.clip_sim.to(device)
 
     def generate(self, prompt1, prompt2, p = 0.3, guidance_scale = 7.5, alpha = 0.7, path:str|None = None, CLIP:bool = True):
 
@@ -40,11 +44,19 @@ class PromptToPromptGenerator:
             img2.save(path + f"img_edited_{self.count}.png")
 
         if CLIP:
-            loss = directional_similarity(img1, img2,
+            """loss = directional_similarity(img1, img2,
                               prompt1, prompt2,
                               self.CLIP_model, 
                               self.CLIP_preprocess, 
-                              self.device)
+                              self.device)"""
+            
+            to_tensor = transforms.ToTensor()
+
+            t_img1 = to_tensor(img1).unsqueeze(0).to(self.device)
+            t_img2 = to_tensor(img2).unsqueeze(0).to(self.device)
+
+            _,_,loss,_ = self.clip_sim(t_img1, t_img2, [prompt1], [prompt2])
+            loss = loss.item()
         else:
             loss = None
             
