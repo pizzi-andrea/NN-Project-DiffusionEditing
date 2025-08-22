@@ -1,0 +1,17 @@
+{
+    "fusing/instructpix2pix-1000-samples": [
+        "file_name",
+        "edited_image",
+        "edit_prompt"
+    ],
+    "toyset": [
+        "file_name",
+        "edited_image",
+        "edit_prompt"
+    ],
+    "20m": [
+        "original_image",
+        "edit_prompt",
+        "edited_image"
+    ]
+}
