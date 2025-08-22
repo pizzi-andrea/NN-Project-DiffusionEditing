@@ -1,3 +1,4 @@
+import random
 import PIL 
 import numpy as np
 import os
@@ -88,13 +89,14 @@ def instance_txt_encoder(model_name_or_path:str, device:str, num_encoders:int, q
     for num in range(2, num_encoders+1):
         str_tokernizer = f"tokenizer_{num}"
         str_encoder = f"text_encoder_{num}"
-        
+        txt_encoder_cls = import_model_class_from_model_name_or_path(model_name_or_path, subfolder=str_encoder)
+       
         tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             subfolder=str_tokernizer,
             use_fast=False
         )
-        txt_encoder = txt_encoder_cls_1.from_pretrained(model_name_or_path, subfolder=str_encoder, torch_dtype=dtype, device_map=device, quantization_config=quantization_config)
+        txt_encoder = txt_encoder_cls.from_pretrained(model_name_or_path, subfolder=str_encoder, torch_dtype=dtype, device_map=device, quantization_config=quantization_config)
 
         tokenizers.append(tokenizer)
         txt_encoders.append(txt_encoder)
@@ -116,12 +118,26 @@ def preprocess_images(examples, resolution, original_image_column, edited_image_
         images = 2 * (images / 255) - 1
         return transforms_callable(images) if transforms_callable else images
 
+def compute_null_conditioning(tokenizers, text_encoders, accelerator):
+    null_conditioning_list = []
+    for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
+        tokens = tokenize_captions([""], tokenizer=a_tokenizer).to(a_text_encoder.device)
+        
+        # Passa i token al text encoder
+        ids = a_text_encoder(
+            tokens,
+            output_hidden_states=True,
+        ).hidden_states[-2]  # shape: [1, seq_len, hidden_dim]
+
+        null_conditioning_list.append(ids)
+
+    
+    return torch.cat(null_conditioning_list, dim=-1).to(accelerator.device)  # shape: [num_models, seq_len, hidden_dim]
+
+
 def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num_validation_images, accelerator, generator, global_step):
     """Generate validation sample on single imageusing given pipline (trained model + preprocessing operations)"""
-    logger.info(
-        f"Running validation... \n Generating {num_validation_images} images with prompt:"
-        f" {validation_prompt}."
-    )
+    
 
     #pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
@@ -142,12 +158,14 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
         edited_images = []
         # Run inference
         for val_img_idx in range(num_validation_images): # attempts generation 
+            p = random.uniform(0.5, 0.8)
             a_val_img = pipeline(
                 validation_prompt,
                 image=original_image,
-                num_inference_steps=24,
-                image_guidance_scale=5.0,
-                guidance_scale=5,
+                strength=p,
+                num_inference_steps = 40,
+                image_guidance_scale = 1.5,
+                guidance_scale = 7,
                 generator=generator,
             ).images[0]
             edited_images.append(a_val_img)

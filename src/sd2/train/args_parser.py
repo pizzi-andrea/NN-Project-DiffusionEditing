@@ -11,8 +11,23 @@ def parse_args():
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
+
+    parser.add_argument(
+        "--checkpoint_model_name_or_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Path to specific  model checkpoint(override --pretrained_model_name_or_path)",
+    )
   
 
+    parser.add_argument(
+        "--conditioning_dropout_prob",
+        help="enable free guidance prompt",
+        required=False,
+        default=None,
+        type=float
+    )
     parser.add_argument(
         "--dataset_path",
         type=str,
@@ -24,8 +39,8 @@ def parse_args():
 
     parser.add_argument(
         "--quantization",
-        type=bool,
-        default=False,
+        required=False,
+        action="store_true",
         help="Enable aggresive quantization for traning"
     )
 
@@ -34,25 +49,6 @@ def parse_args():
         type=int,
         default=2,
         help="Number of encoders used by model to encode guidance prompt. Old version of SD use only one encoder, modernel implementation incrased this value."
-    )
-    # args for custom dataset
-    parser.add_argument(
-        "--original_image_column",
-        type=str,
-        default="input_image",
-        help="The column of the dataset containing the original image on which edits where made.",
-    )
-    parser.add_argument(
-        "--edited_image_column",
-        type=str,
-        default="edited_image",
-        help="The column of the dataset containing the edited image.",
-    )
-    parser.add_argument(
-        "--edit_prompt_column",
-        type=str,
-        default="edit_prompt",
-        help="The column of the dataset containing the edit instruction.",
     )
 
     # validation parameters
@@ -74,7 +70,7 @@ def parse_args():
     parser.add_argument(
         "--validation_steps",
         type=int,
-        default=120,
+        default=60,
         help=(
             "Run fine-tuning validation every X steps. The validation process consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`."
@@ -114,8 +110,7 @@ def parse_args():
 
     parser.add_argument(
         "--preprocessing",
-        type=bool,
-        default=False,
+        action="store_true",
         required=False,
         help=(
             "Applay defult argumentation order in to redice overfitting issues"
@@ -234,8 +229,7 @@ def parse_args():
     
     parser.add_argument(
         "--lora",
-        type=bool,
-        default=False,
+        action="store_true",
         required=False,
         help="use lora quantization method for unet train"
     )

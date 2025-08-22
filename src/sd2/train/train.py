@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import math
 import os
@@ -36,24 +37,34 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from transformers import BitsAndBytesConfig
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer
+
 import matplotlib.pyplot as plt
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+
+from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.optimization import get_scheduler
-from diffusers import StableDiffusionInstructPix2PixPipeline
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_instruct_pix2pix import StableDiffusionInstructPix2PixPipeline
 
 from diffusers.training_utils import EMAModel
-from train_utils import compute_embeddings_for_prompts, load_model_hook, log_validation, preprocess_images, unwrap_model, instance_txt_encoder
+from train_utils import compute_embeddings_for_prompts, compute_null_conditioning, load_model_hook, log_validation, preprocess_images, tokenize_captions, unwrap_model, instance_txt_encoder
 from args_parser import parse_args
 from datasets import load_from_disk
 
+import matplotlib
+matplotlib.use("Agg")  # backend non interattivo
 logger = get_logger(__name__, log_level="INFO")
 use_ema = False
-DATASET_NAME_MAPPING = {
-    "fusing/instructpix2pix-1000-samples": ("file_name", "edited_image", "edit_prompt"),
-    "toyset": ("file_name", "edited_image", "edit_prompt"),
-}
+
+
+file_path = "dataset_config.json"
+
+with open(file_path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+# riconverti le liste in tuple
+DATASET_NAME_MAPPING = {k: tuple(v) for k, v in data.items()}
 
 TORCH_DTYPE_MAPPING = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
 
@@ -243,34 +254,21 @@ def train():
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
-    column_names = dataset["train"].column_names
-
+    if isinstance(dataset, datasets.Dataset):
+        dataset = datasets.DatasetDict({
+            "train":dataset
+        })
+    
+    
     # 6. Get the column names for input/target.
     dataset_columns = DATASET_NAME_MAPPING.get(dataset_path.name, None)
-    if args.original_image_column is None:
-        original_image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        original_image_column = args.original_image_column
-        if original_image_column not in column_names:
-            raise ValueError(
-                f"--original_image_column' value '{args.original_image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.edit_prompt_column is None:
-        edit_prompt_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        edit_prompt_column = args.edit_prompt_column
-        if edit_prompt_column not in column_names:
-            raise ValueError(
-                f"--edit_prompt_column' value '{args.edit_prompt_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.edited_image_column is None:
-        edited_image_column = dataset_columns[2] if dataset_columns is not None else column_names[2]
-    else:
-        edited_image_column = args.edited_image_column
-        if edited_image_column not in column_names:
-            raise ValueError(
-                f"--edited_image_column' value '{args.edited_image_column}' needs to be one of: {', '.join(column_names)}"
-            )
+    if not dataset_columns:
+        raise ValueError("Unknow dataset schema")
+    
+    original_image_column = dataset_columns[0] 
+    edit_prompt_column = dataset_columns[1] 
+    edited_image_column = dataset_columns[2] 
+   
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -294,7 +292,7 @@ def train():
         )
     if args.preprocessing:
         train_transforms = transforms.Compose([
-                transforms.RandomCrop(args.resolution), transforms.RandomHorizontalFlip()
+                transforms.RandomCrop(args.resolution)
             ]
         )
 
@@ -313,11 +311,6 @@ def train():
     vae.requires_grad_(False)
     for i in range(len(text_encoders)):
         text_encoders[i].requires_grad_(False)
-    
-
-    # Set UNet to trainable.
-    unet.train()
-
 ########
 
     def compute_time_ids():
@@ -482,7 +475,9 @@ def train():
     history_loss = []
 
     for epoch in range(first_epoch, args.num_train_epochs):
+        unet.train()
         train_loss = 0.0
+        logger.info("start epoch %d", epoch)
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
                 # We want to learn the denoising process w.r.t the edited images which
@@ -507,7 +502,7 @@ def train():
 
                 # SDXL additional inputs
                 encoder_hidden_states = batch["prompt_embeds"]
-                add_text_embeds = batch["add_text_embeds"]
+                
 
                 # Get the additional image embedding for conditioning.
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
@@ -518,23 +513,27 @@ def train():
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://huggingface.co/papers/2211.09800.
-                #if args.conditioning_dropout_prob is not None:
-                    #random_p = torch.rand(bsz, device=latents.device, generator=generator)
+                
+                
+                if args.conditioning_dropout_prob is not None:
+                    logger.info("conditional dropout enabled")
+                    null_conditioning = compute_null_conditioning(tokenizers, text_encoders, accelerator)
+                    random_p = torch.rand(bsz, device=latents.device, generator=generator)
                     # Sample masks for the edit prompts.
-                    #prompt_mask = random_p < 2 * args.conditioning_dropout_prob
-                    #prompt_mask = prompt_mask.reshape(bsz, 1, 1)
+                    prompt_mask = random_p < 2 * args.conditioning_dropout_prob
+                    prompt_mask = prompt_mask.reshape(bsz, 1, 1)
                     # Final text conditioning.
-                    #encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
+                    encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
 
                     # Sample masks for the original images.
-                    #image_mask_dtype = original_image_embeds.dtype
-                    #image_mask = 1 - (
-                    #    (random_p >= args.conditioning_dropout_prob).to(image_mask_dtype)
-                    #    * (random_p < 3 * args.conditioning_dropout_prob).to(image_mask_dtype)
-                    #)
-                    #image_mask = image_mask.reshape(bsz, 1, 1, 1)
+                    image_mask_dtype = original_image_embeds.dtype
+                    image_mask = 1 - (
+                        (random_p >= args.conditioning_dropout_prob).to(image_mask_dtype)
+                        * (random_p < 3 * args.conditioning_dropout_prob).to(image_mask_dtype)
+                    )
+                    image_mask = image_mask.reshape(bsz, 1, 1, 1)
                     # Final image conditioning.
-                    #original_image_embeds = image_mask * original_image_embeds
+                    original_image_embeds = image_mask * original_image_embeds
 
                 # Concatenate the `original_image_embeds` with the `noisy_latents`.
                 concatenated_noisy_latents = torch.cat([noisy_latents, original_image_embeds], dim=1)
@@ -548,8 +547,10 @@ def train():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
-
+                
+                added_cond_kwargs = {"time_ids": add_time_ids}
+               
+               
                 model_pred = unet(
                     concatenated_noisy_latents,
                     timesteps,
@@ -559,6 +560,7 @@ def train():
 
                 )[0]
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -583,6 +585,7 @@ def train():
                 train_loss = 0.0
 
                 if global_step % round(len(train_dataset)/(total_batch_size)) == 0:
+                    
                     if accelerator.is_main_process:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         
@@ -613,7 +616,8 @@ def train():
             progress_bar.set_postfix(**logs)
 
             ### BEGIN: Perform validation every `validation_epochs` steps
-            if global_step % args.validation_steps == 0 and global_step != 0 and args.validation_steps != 0:
+            if global_step % round(len(train_dataset)/(total_batch_size)) == 0 and global_step != 0 and args.validation_steps != 0:
+                logger.info("Perform validation every `validation_epochs` steps")
                 if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None) and (epoch % args.validation_epochs == 0):
                     # create pipeline
                     if use_ema:
@@ -633,7 +637,7 @@ def train():
                         torch_dtype=weight_dtype,
                     )
                     pipeline.enable_model_cpu_offload()
-
+                    
                     log_validation(
                         logger,
                         args.val_image_url_or_path,
@@ -654,10 +658,8 @@ def train():
                     torch.cuda.empty_cache()
             ### END: Perform validation every `validation_epochs` steps
 
-            if global_step >= args.max_train_steps:
-                break
-
     # Create the pipeline using the trained modules and save it.
+    logger.info("end epoch %d", epoch)
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         if use_ema:

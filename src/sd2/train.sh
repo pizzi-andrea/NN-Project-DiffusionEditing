@@ -3,7 +3,7 @@
 # note
 # - utilizzare modello compatibili con la libreria diffusers con struttura [model_name]/vae/ e [model_name]/unet/ 
 accelerate launch train/train.py \
-    --pretrained_model_name_or_path=stabilityai/sd-turbo \
+    --pretrained_model_name_or_path=stabilityai/stable-diffusion-2-1-base \
     --num_train_epochs=20 \
     --dataset_path=toyset \
     --num_encoders=1 \
