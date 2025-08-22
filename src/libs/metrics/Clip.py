@@ -83,5 +83,3 @@ def directional_similarity(img1,
 
 if __name__ == "__main__":
     clip = ClipSimilarity(str = "ViT-B/32")
-
-    clip()

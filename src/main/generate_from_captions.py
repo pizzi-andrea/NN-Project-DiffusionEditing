@@ -8,6 +8,7 @@ import random
 if __name__ == "__main__":
     MODEL_ID = "stabilityai/stable-diffusion-2-1"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    
     NUM_INFERENCE_STEPS = 30
     ALPHA = 0.7
     GUIDANCE_SCALE = 7.5
@@ -28,7 +29,9 @@ if __name__ == "__main__":
     for i in range(NUM_GEN):
         print(f"--------- PRINTING SENTENCE {i+1} ---------")
         torch.cuda.empty_cache()
+
         p = random.uniform(0.1, 0.9)
+
         print(f"p = {p}")
 
         img1, img2, score = ptp.generate(prompt1,

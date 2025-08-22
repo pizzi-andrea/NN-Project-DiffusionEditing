@@ -24,7 +24,7 @@ class PromptToPromptGenerator:
         self.controller = AttentionController(total_steps=self.num_inference_steps)
         #self.CLIP_model, self.CLIP_preprocess = clip.load("ViT-B/32", device=device)
         #self.CLIP_model, _, self.CLIP_preprocess = open_clip.create_model_and_transforms("ViT-B-32-quickgelu", device=device, jit=True)
-        self.clip_sim = ClipSimilarity(str = "ViT-B/32")
+        self.clip_sim = ClipSimilarity(name = "ViT-B/32")
         self.clip_sim.to(device)
 
     def generate(self, prompt1, prompt2, p = 0.3, guidance_scale = 7.5, alpha = 0.7, path:str|None = None, CLIP:bool = True):
