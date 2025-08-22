@@ -303,7 +303,7 @@ def train():
 
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizers, text_encoders = instance_txt_encoder(args.pretrained_model_name_or_path, device=accelerator.device if quantization_config else "cpu", num_encoders=args.num_encoders, dtype=weight_dtype, quantization_config=quantization_config)
+    tokenizers, text_encoders = instance_txt_encoder(args.pretrained_model_name_or_path, device=accelerator.device, num_encoders=args.num_encoders, dtype=weight_dtype, quantization_config=quantization_config)
     
 
     # Freeze vae and text_encoders
@@ -353,15 +353,17 @@ def train():
     def collate_fn(examples):
         original_pixel_values = torch.stack([example["original_pixel_values"] for example in examples])
         original_pixel_values = original_pixel_values.to(memory_format=torch.contiguous_format).float()
+        
         edited_pixel_values = torch.stack([example["edited_pixel_values"] for example in examples])
         edited_pixel_values = edited_pixel_values.to(memory_format=torch.contiguous_format).float()
+        
         prompt_embeds = torch.concat([example["prompt_embeds"] for example in examples], dim=0)
-        add_text_embeds = torch.concat([example["add_text_embeds"] for example in examples], dim=0)
+        #add_text_embeds = torch.concat([example["add_text_embeds"] for example in examples], dim=0)
         return {
             "original_pixel_values": original_pixel_values,
             "edited_pixel_values": edited_pixel_values,
             "prompt_embeds": prompt_embeds,
-            "add_text_embeds": add_text_embeds,
+            #"add_text_embeds": add_text_embeds,
         }
 
     # DataLoaders creation:
@@ -370,7 +372,7 @@ def train():
         shuffle=True,
         collate_fn=collate_fn,
         batch_size=args.train_batch_size,
-        num_workers=args.dataloader_num_workers,
+        num_workers=args.dataloader_num_workers
     )
 
     # Scheduler and math around the number of training steps.
@@ -418,8 +420,8 @@ def train():
     # outload text encoder and txt encoder order to free GPU memory
     
     
-    for encoder_txt in text_encoders:
-        encoder_txt.to('cpu')
+    #for encoder_txt in text_encoders:
+    #    encoder_txt.to('cpu')
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -513,7 +515,7 @@ def train():
                 
                 
                 if args.conditioning_dropout_prob is not None:
-                    logger.info("conditional dropout enabled")
+                    #logger.info("conditional dropout enabled")
                     null_conditioning = compute_null_conditioning(tokenizers, text_encoders, accelerator)
                     random_p = torch.rand(bsz, device=latents.device, generator=generator)
                     # Sample masks for the edit prompts.
@@ -533,6 +535,8 @@ def train():
                     original_image_embeds = image_mask * original_image_embeds
 
                 # Concatenate the `original_image_embeds` with the `noisy_latents`.
+
+                
                 concatenated_noisy_latents = torch.cat([noisy_latents, original_image_embeds], dim=1)
 
                 # Get the target for loss depending on the prediction type
