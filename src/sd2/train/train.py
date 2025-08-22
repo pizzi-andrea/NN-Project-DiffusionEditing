@@ -213,16 +213,15 @@ def train():
 
 
     def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if use_ema:
-                    ema.save_pretrained(os.path.join(output_dir, "unet_ema"))
+            if use_ema:
+                ema.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
+            for i, model in enumerate(models):
+                model.save_pretrained(os.path.join(output_dir, "unet"))
 
-                    # make sure to pop weight so that corresponding model is not saved again
-                    if weights:
-                        weights.pop()
+                # make sure to pop weight so that corresponding model is not saved again
+                if weights:
+                    weights.pop()
     
     
 
@@ -346,12 +345,10 @@ def train():
     def preprocess_train(examples):
         return _preprocess_train(accelerator, examples, args.resolution, original_image_column, edited_image_column, edit_prompt_column, text_encoders, tokenizers, train_transforms)
 
-    
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
+    if args.max_train_samples is not None:
+        dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+    # Set the training transforms
+    train_dataset = dataset["train"].with_transform(preprocess_train)
     
     def collate_fn(examples):
         original_pixel_values = torch.stack([example["original_pixel_values"] for example in examples])
@@ -415,8 +412,8 @@ def train():
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        accelerator.init_trackers(model_name, config=vars(args))
+    
+    accelerator.init_trackers(model_name, config=vars(args))
     
     # outload text encoder and txt encoder order to free GPU memory
     
@@ -502,7 +499,7 @@ def train():
 
                 # SDXL additional inputs
                 encoder_hidden_states = batch["prompt_embeds"]
-                
+                #add_text_embeds = batch["add_text_embeds"]
 
                 # Get the additional image embedding for conditioning.
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
@@ -549,6 +546,7 @@ def train():
                 # Predict the noise residual and compute loss
                 
                 added_cond_kwargs = {"time_ids": add_time_ids}
+                #added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
                
                
                 model_pred = unet(
@@ -563,7 +561,7 @@ def train():
                 
 
                 # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                avg_loss = loss.mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
@@ -585,32 +583,30 @@ def train():
                 train_loss = 0.0
 
                 if global_step % round(len(train_dataset)/(total_batch_size)) == 0:
+                    # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                     
-                    if accelerator.is_main_process:
-                        # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                        
-                        checkpoints = os.listdir(out_dir)
-                        checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-                        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+                    checkpoints = os.listdir(out_dir)
+                    checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
+                    checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
-                        # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-                        if len(checkpoints) >= 3:
-                            num_to_remove = len(checkpoints) - 3 + 1
-                            removing_checkpoints = checkpoints[0:num_to_remove]
+                    # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                    if len(checkpoints) >= 3:
+                        num_to_remove = len(checkpoints) - 3 + 1
+                        removing_checkpoints = checkpoints[0:num_to_remove]
 
-                            logger.info(
-                                f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                            )
-                            logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+                        logger.info(
+                            f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+                        )
+                        logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
-                            for removing_checkpoint in removing_checkpoints:
-                                removing_checkpoint = os.path.join(out_dir, removing_checkpoint)
-                                shutil.rmtree(removing_checkpoint)
+                        for removing_checkpoint in removing_checkpoints:
+                            removing_checkpoint = os.path.join(out_dir, removing_checkpoint)
+                            shutil.rmtree(removing_checkpoint)
 
-                        save_path = os.path.join(out_dir, f"checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
-                        plot_loss(history_loss, save_path)
-                        logger.info(f"Saved state to {save_path}")
+                    save_path = os.path.join(out_dir, f"checkpoint-{global_step}")
+                    accelerator.save_state(save_path)
+                    plot_loss(history_loss, save_path)
+                    logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
@@ -660,37 +656,36 @@ def train():
 
     # Create the pipeline using the trained modules and save it.
     logger.info("end epoch %d", epoch)
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        if use_ema:
-            ema.copy_to(unet.parameters())
 
-        pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            unet=unwrap_model(unet, accelerator),
-            text_encoder=text_encoders[0],
-            #text_encoder_2=text_encoders[1],
-            tokenizer=tokenizers[0],
-            #tokenizer_2=tokenizers[1],
-            vae=vae,
-            torch_dtype=weight_dtype,
-        )
+    if use_ema:
+        ema.copy_to(unet.parameters())
 
-        pipeline.save_pretrained(out_dir)
-        pipeline.enable_model_cpu_offload()
+    pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        unet=unwrap_model(unet, accelerator),
+        text_encoder=text_encoders[0],
+        #text_encoder_2=text_encoders[1],
+        tokenizer=tokenizers[0],
+        #tokenizer_2=tokenizers[1],
+        vae=vae,
+        torch_dtype=weight_dtype,
+    )
 
-        if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
-            log_validation(
-                        logger,
-                        args.val_image_url_or_path,
-                        args.validation_prompt,
-                        out_dir,
-                        pipeline,
-                        args.num_validation_images,
-                        accelerator,
-                        generator,
-                        global_step,
-                    )
+    pipeline.save_pretrained(out_dir)
+    pipeline.enable_model_cpu_offload()
+
+    if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
+        log_validation(
+                    logger,
+                    args.val_image_url_or_path,
+                    args.validation_prompt,
+                    out_dir,
+                    pipeline,
+                    args.num_validation_images,
+                    accelerator,
+                    generator,
+                    global_step,
+                )
 
     accelerator.end_training()
 
