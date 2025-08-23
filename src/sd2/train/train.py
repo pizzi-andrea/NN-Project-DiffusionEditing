@@ -665,7 +665,7 @@ def train():
                         vae=vae,
                         torch_dtype=weight_dtype,
                     )
-                    pipeline.enable_model_cpu_offload()
+                    #pipeline.enable_model_cpu_offload()
                     
                     log_validation(
                         logger,
@@ -705,7 +705,7 @@ def train():
     )
 
     pipeline.save_pretrained(out_dir)
-    pipeline.enable_model_cpu_offload()
+    #pipeline.enable_model_cpu_offload()
 
     if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
         log_validation(
