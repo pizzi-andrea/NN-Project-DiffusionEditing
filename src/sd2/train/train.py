@@ -43,6 +43,7 @@ import diffusers
 
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_instruct_pix2pix import StableDiffusionInstructPix2PixPipeline
@@ -301,8 +302,34 @@ def train():
 
     
 
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    # Load scheduler and models (update with dynamic import)
+    scheduler_conf = DDPMScheduler.load_config(
+        args.pretrained_model_name_or_path,
+        subfolder="scheduler"
+    )
+
+    scheduler_cls = scheduler_conf["_class_name"]
+    logger.info("scheduler dected %s", scheduler_cls)
+    
+    if scheduler_cls == "DDIMScheduler":
+        noise_scheduler_cls = DDPMScheduler
+    elif scheduler_cls == "PNDMScheduler":
+        from diffusers.schedulers.scheduling_pndm import PNDMScheduler
+        noise_scheduler_cls = PNDMScheduler
+    elif scheduler_cls == "EulerDiscreteScheduler":
+        from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
+        noise_scheduler_cls = EulerDiscreteScheduler
+    elif scheduler_cls == "EulerAncestralDiscreteScheduler":
+        from diffusers.schedulers.scheduling_euler_ancestral_discrete import EulerAncestralDiscreteScheduler
+        noise_scheduler_cls = EulerAncestralDiscreteScheduler
+    else:
+        raise ValueError(f"impossible detectd class cheduler {scheduler_cls}")
+    
+    
+    logger.info("scheduler instance %s", noise_scheduler_cls.__name__)
+    noise_scheduler = noise_scheduler_cls.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+
+
     tokenizers, text_encoders = instance_txt_encoder(args.pretrained_model_name_or_path, device=accelerator.device, num_encoders=args.num_encoders, dtype=weight_dtype, quantization_config=quantization_config)
     
 
@@ -347,6 +374,8 @@ def train():
 
     if args.max_train_samples is not None:
         dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+   
+    
     # Set the training transforms
     train_dataset = dataset["train"].with_transform(preprocess_train)
     
