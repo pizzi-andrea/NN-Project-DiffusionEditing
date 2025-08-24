@@ -20,7 +20,7 @@ import math
 import os
 import shutil
 import warnings
-
+import numpy as np
 from pathlib import Path
 
 
@@ -43,13 +43,12 @@ import diffusers
 
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.configuration_utils import ConfigMixin
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_instruct_pix2pix import StableDiffusionInstructPix2PixPipeline
 
 from diffusers.training_utils import EMAModel
-from train_utils import compute_embeddings_for_prompts, compute_null_conditioning, load_model_hook, log_validation, preprocess_images, tokenize_captions, unwrap_model, instance_txt_encoder
+from train_utils import compute_embeddings_for_prompts, compute_null_conditioning, load_model_hook, log_validation, preprocess_images, unwrap_model, instance_txt_encoder, CLIP_Score
 from args_parser import parse_args
 from datasets import load_from_disk
 
@@ -57,7 +56,6 @@ import matplotlib
 matplotlib.use("Agg")  # backend non interattivo
 logger = get_logger(__name__, log_level="INFO")
 use_ema = False
-
 
 file_path = "dataset_config.json"
 
@@ -70,7 +68,7 @@ DATASET_NAME_MAPPING = {k: tuple(v) for k, v in data.items()}
 TORCH_DTYPE_MAPPING = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
 
 
-def plot_loss(loss_history: list[float], save_path: str):
+def plot_loss(loss_history: list[float], save_path: str|Path):
     """
     
     Args:
@@ -94,6 +92,7 @@ def plot_loss(loss_history: list[float], save_path: str):
 
 def train():
 
+    
     args = parse_args()
 
     # log configuration
@@ -292,6 +291,7 @@ def train():
         )
     if args.preprocessing:
         train_transforms = transforms.Compose([
+                transforms.RandomHorizontalFlip(),
                 transforms.RandomCrop(args.resolution)
             ]
         )
@@ -445,6 +445,7 @@ def train():
     # The trackers initializes automatically on the main process.
     
     accelerator.init_trackers(model_name, config=vars(args))
+    clip_score = CLIP_Score("openai/clip-vit-base-patch32")
     
     # outload text encoder and txt encoder order to free GPU memory
     
@@ -464,7 +465,7 @@ def train():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-
+    val = False
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
@@ -501,7 +502,9 @@ def train():
     )
 
     history_loss = []
-
+    epoch_loss = []
+    mean_epoch = []
+   
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         train_loss = 0.0
@@ -611,8 +614,10 @@ def train():
                     ema.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
+                val = True # enable validation when update global_step is update 
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 history_loss.append(train_loss)
+                epoch_loss.append(train_loss)
                 train_loss = 0.0
 
                 if global_step % round(len(train_dataset)/(total_batch_size)) == 0:
@@ -638,16 +643,21 @@ def train():
 
                     save_path = os.path.join(out_dir, f"checkpoint-{global_step}")
                     accelerator.save_state(save_path)
-                    plot_loss(history_loss, save_path)
+                    plot_loss(history_loss, Path(save_path))
                     logger.info(f"Saved state to {save_path}")
+                    
+                    
 
+            
+            
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
+            
 
             ### BEGIN: Perform validation every `validation_epochs` steps
-            if global_step % round(len(train_dataset)/(total_batch_size)) == 0 and global_step != 0 and args.validation_steps != 0:
-                logger.info("Perform validation every `validation_epochs` steps")
-                if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None) and (epoch % args.validation_epochs == 0):
+            if global_step % round(len(train_dataset)/(total_batch_size)) == 0 and args.validation_steps != 0 and val:
+                logger.info("Perform validation %d steps", global_step)
+                if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
                     # create pipeline
                     if use_ema:
                         # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
@@ -664,8 +674,9 @@ def train():
                         #tokenizer_2=tokenizers[1],
                         vae=vae,
                         torch_dtype=weight_dtype,
+                        safety_checker=None
                     )
-                    pipeline.enable_model_cpu_offload()
+                    #pipeline.enable_model_cpu_offload()
                     
                     log_validation(
                         logger,
@@ -677,7 +688,10 @@ def train():
                         accelerator,
                         generator,
                         global_step,
+                        clip_score
                     )
+
+                    
 
                     if use_ema:
                         # Switch back to the original UNet parameters.
@@ -685,10 +699,21 @@ def train():
 
                     del pipeline
                     torch.cuda.empty_cache()
+                # disable validation untill next global_step not occure
+                val = False
             ### END: Perform validation every `validation_epochs` steps
-
+        # end step
+        
+        mean_epoch.append(np.mean(epoch_loss).item())
+        plot_loss(mean_epoch, out_dir)
+        logger.info("end epoch %d with mean loss=%f", epoch, mean_epoch[-1])
+        epoch_loss.clear()
+    # end epoch
+   
+   
+   
     # Create the pipeline using the trained modules and save it.
-    logger.info("end epoch %d", epoch)
+        
 
     if use_ema:
         ema.copy_to(unet.parameters())
@@ -702,10 +727,11 @@ def train():
         #tokenizer_2=tokenizers[1],
         vae=vae,
         torch_dtype=weight_dtype,
+        safety_checker=None
     )
 
     pipeline.save_pretrained(out_dir)
-    pipeline.enable_model_cpu_offload()
+    #pipeline.enable_model_cpu_offload()
 
     if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
         log_validation(
@@ -718,6 +744,7 @@ def train():
                     accelerator,
                     generator,
                     global_step,
+                    clip_score
                 )
 
     accelerator.end_training()

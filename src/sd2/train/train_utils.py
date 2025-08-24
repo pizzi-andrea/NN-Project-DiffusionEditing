@@ -6,10 +6,10 @@ import torch
 from contextlib import nullcontext
 from transformers import AutoTokenizer, PretrainedConfig
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.utils import load_image
-from diffusers import UNet2DConditionModel
-
-
+from diffusers.utils.loading_utils import load_image
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+from transformers import CLIPProcessor, CLIPModel
+from pathlib import Path
 from diffusers.training_utils import EMAModel
 def convert_to_np(image, resolution):
     if isinstance(image, str):
@@ -104,6 +104,52 @@ def instance_txt_encoder(model_name_or_path:str, device:str, num_encoders:int, q
 
     return tokenizers, txt_encoders
 
+
+
+class CLIP_Score:
+    def __init__(self, clip_model:CLIPModel|str, clip_processor:CLIPProcessor|str|None=None, device='cpu', dtype=torch.float32) -> None:
+        
+        self.device = device
+        self.dtype = dtype
+        if isinstance(clip_model, str):
+            self.clip_model = CLIPModel.from_pretrained(clip_model)
+        elif isinstance(clip_model, CLIPModel):
+            self.clip_model = clip_model
+        else:
+            raise ValueError(f"clip_model class unknow {clip_model.__class__.__name__}")
+
+        if isinstance(clip_model, str) and not clip_processor:
+            self.clip_processor = CLIPProcessor.from_pretrained(clip_model, use_fast=False)
+        elif isinstance(clip_processor, str):
+            self.clip_processor = CLIPProcessor.from_pretrained(clip_processor, use_fast=False)
+        elif isinstance(clip_processor, CLIPProcessor):
+            self.clip_processor = clip_processor
+        else:
+            raise ValueError(f"clip_processor class unknow {clip_processor.__class__.__name__}")
+        
+        
+        
+    def process(self, prompt, image):
+        return self.clip_processor(text=prompt, images=image, return_tensors="pt", padding=True)
+    
+    
+    def compute_clip_emb(self, prompt, image):
+
+        if isinstance(image, (str, Path)):
+            image = PIL.Image.open(image)
+        self.clip_model = self.clip_model.to(self.device, dtype=self.dtype)
+
+        with torch.no_grad():
+            output = self.clip_model(**self.process(prompt, image), return_dict=True)
+        return {
+            "txt_emb": output["text_embeds"], 
+            "img_emb": output["image_embeds"]
+        }
+    
+    def score(self, prompt, image):
+        embs = self.compute_clip_emb(prompt, image)
+        return max(0.0, (100*torch.cosine_similarity(embs["img_emb"], embs["txt_emb"])).item())
+
 def preprocess_images(examples, resolution, original_image_column, edited_image_column, transforms_callable=None):
         original_images = np.concatenate(
             [convert_to_np(image, resolution) for image in examples[original_image_column]]
@@ -135,7 +181,7 @@ def compute_null_conditioning(tokenizers, text_encoders, accelerator):
     return torch.cat(null_conditioning_list, dim=-1).to(accelerator.device)  # shape: [num_models, seq_len, hidden_dim]
 
 
-def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num_validation_images, accelerator, generator, global_step):
+def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num_validation_images, accelerator, generator, global_step, clip_metric=None):
     """Generate validation sample on single imageusing given pipline (trained model + preprocessing operations)"""
     
 
@@ -155,7 +201,6 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
         autocast_ctx = torch.autocast(accelerator.device.type)
 
     with autocast_ctx:
-        edited_images = []
         # Run inference
         for val_img_idx in range(num_validation_images): # attempts generation 
             p = random.uniform(0.5, 0.8)
@@ -165,11 +210,16 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
                 strength=p,
                 num_inference_steps = 40,
                 image_guidance_scale = 1.5,
-                guidance_scale = 7,
+                guidance_scale = 3,
                 generator=generator,
             ).images[0]
-            edited_images.append(a_val_img)
+           
             # Save validation images
+
+            if clip_metric:
+                logger.info("Clip_score for %s %f", f"step_{global_step}_val_img_{val_img_idx}.png", clip_metric.score(validation_prompt, a_val_img))
+            
+            
             a_val_img.save(os.path.join(val_save_dir, f"step_{global_step}_val_img_{val_img_idx}.png"))
 
 # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
@@ -239,5 +289,3 @@ def compute_embeddings_for_prompts(accelerator, prompts, text_encoders, tokenize
         prompt_embeds_all = prompt_embeds_all.to(accelerator.device)
         add_text_embeds_all = add_text_embeds_all.to(accelerator.device)
     return prompt_embeds_all, add_text_embeds_all
-
-

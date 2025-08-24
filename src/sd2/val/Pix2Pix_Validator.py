@@ -31,10 +31,10 @@ class Pix2Pix_Validator:
             img = self.pipline(
                 prompt=prompt,
                 image=guidance_img,
-                num_inference_steps = 40,
+                num_inference_steps = 100,
                 prompt_guidance=prompt_guidance,
                 image_guidance_scale=image_guidance,
-                streght=0.8
+               
                 
             ).images[0]
 
