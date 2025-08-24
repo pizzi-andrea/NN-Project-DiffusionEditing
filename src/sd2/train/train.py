@@ -539,7 +539,8 @@ def train():
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
 
                 original_pixel_values = batch["original_pixel_values"].to(weight_dtype)
-                original_image_embeds = vae.encode(original_pixel_values.to(torch.float32)).latent_dist.sample()
+                #original_image_embeds = vae.encode(original_pixel_values.to(torch.float32)).latent_dist.sample()
+                original_image_embeds = vae.encode(original_pixel_values.to(torch.float32)).latent_dist.mode()
                 original_image_embeds = original_image_embeds.to(weight_dtype)
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
