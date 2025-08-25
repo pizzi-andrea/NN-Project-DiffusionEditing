@@ -1,44 +1,247 @@
+
 import argparse
-from pathlib import Path
-def args_parse():
-    parser = argparse.ArgumentParser(description="Parameters for Eval Instruct_Pix2Pix model")
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Script to train Stable Diffusion for InstructPix2Pix.")
     parser.add_argument(
-        '--photo', help='path to single photo', required=True, type=str
+        "--pretrained_model_name_or_path",
+        type=str,
+        default=None,
+        required=True,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
 
     parser.add_argument(
-        '--ref_photo', help='path to reference photo use to compute loss value', required=False, type=str
+        "--checkpoint_model_name_or_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Path to specific  model checkpoint(override --pretrained_model_name_or_path)",
+    )
+  
+
+    parser.add_argument(
+        "--conditioning_dropout_prob",
+        help="enable free guidance prompt",
+        required=False,
+        default=None,
+        type=float
+    )
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        default=None,
+        help=(
+            "path for local dataset"
+        ),
     )
 
     parser.add_argument(
-        '--num_edits', help='number of edits performe during generation', required=False, default=3, type=int
+        "--quantization",
+        required=False,
+        action="store_true",
+        help="Enable aggresive quantization for traning"
     )
 
     parser.add_argument(
-        '--edit_prompt', help='edit prompt', required=True, type=str
+        "--num_encoders",
+        type=int,
+        default=2,
+        help="Number of encoders used by model to encode guidance prompt. Old version of SD use only one encoder, modernel implementation incrased this value."
+    )
+
+    # validation parameters
+    parser.add_argument(
+        "--val_image_url_or_path",
+        type=str,
+        default=None,
+        help="URL to the original image that you would like to edit (used during inference for debugging purposes).",
+    )
+    parser.add_argument(
+        "--validation_prompt", type=str, default=None, help="A prompt that is sampled during training for inference."
+    )
+    parser.add_argument(
+        "--num_validation_images",
+        type=int,
+        default=3,
+        help="Number of images that should be generated during validation with `validation_prompt`.",
+    )
+    parser.add_argument(
+        "--validation_steps",
+        type=int,
+        default=60,
+        help=(
+            "Run fine-tuning validation every X steps. The validation process consists of running the prompt"
+            " `args.validation_prompt` multiple times: `args.num_validation_images`."
+        ),
+    )
+
+    # limit
+    parser.add_argument(
+        "--max_train_samples",
+        type=int,
+        default=None,
+        help=(
+            "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        ),
+    )
+
+    # output directory
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="instruct-pix2pix-model",
+        help="The output directory where the model predictions and checkpoints will be written.",
+    )
+
+    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    
+    # image parameters
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=256,
+        help=(
+            "The resolution for input images, all the images in the train/validation dataset will be resized to this resolution."
+        ),
     )
 
     parser.add_argument(
-        '--pipline_weights', help='path to InstructPix2Pix pipline weights', required=True, type=str
+        "--preprocessing",
+        action="store_true",
+        required=False,
+        help=(
+            "Applay defult argumentation order in to redice overfitting issues"
+        ),
+    )
+    
+    # traning hyperparameters
+
+    # batch size train
+    parser.add_argument(
+        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
+    )
+    
+    # epochs
+    parser.add_argument("--num_train_epochs", type=int, default=100)
+    parser.add_argument(
+        "--max_train_steps",
+        type=int,
+        default=None,
+        help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
     )
 
     parser.add_argument(
-        '--out_dir', help='directory where save validation data', required=True, type=str
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
 
+    # lr
     parser.add_argument(
-        '--guidance_prompt_scale', help='prompt guidance', required=False, default=1, type=float
+        "--learning_rate",
+        type=float,
+        default=1e-4,
+        help="Initial learning rate (after the potential warmup period) to use.",
     )
 
+
+    # lr-scheduler
     parser.add_argument(
-        '--guidance_image_scale', help='image guidance', required=False, default=1, type=float
+        "--lr_scheduler",
+        type=str,
+        default="constant",
+        help=(
+            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
+            ' "constant", "constant_with_warmup"]'
+        ),
     )
+    # lr-warmup
+    parser.add_argument(
+        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
+    )
+
+    # CPU cores
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
+        ),
+    )
+
+    # Adam optimizer parameters
+    parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
+    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
+   
+   # log-dir
+    parser.add_argument(
+        "--logging_dir",
+        type=str,
+        default="logs",
+        help=(
+            "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
+            " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
+        ),
+    )
+
+    # validation epochs
+    parser.add_argument(
+        "--validation_epochs",
+        type=int,
+        default=1,
+        help=(
+            "Run fine-tuning validation every X epochs. The validation process consists of running the prompt"
+            " `args.validation_prompt` multiple times: `args.num_validation_images`."
+        ),
+    )
+
+    # precision
+    parser.add_argument(
+        "--mixed_precision",
+        type=str,
+        default=None,
+        choices=["no", "fp16", "bf16"],
+        help=(
+            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
+            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
+            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
+        ),
+    )
+
+    # pretrained weights
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Whether training should be resumed from a previous checkpoint. Use a path saved by"
+            ' `--checkpointing_steps`, or `"latest"` to automatically select the last available checkpoint.'
+        ),
+    )
+    
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        required=False,
+        help="use lora quantization method for unet train"
+    )
+    
 
     args = parser.parse_args()
+    
+  
 
-    # sanity check
-
-    # ...
+    # Sanity checks
+    if args.dataset_path is None:
+        raise ValueError("Need either a dataset name or a training folder.")
+    
 
     return args
