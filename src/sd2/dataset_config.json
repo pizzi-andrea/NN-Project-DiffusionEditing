@@ -5,9 +5,9 @@
         "edit_prompt"
     ],
     "toyset": [
-        "file_name",
-        "edited_image",
-        "edit_prompt"
+        "input_image",
+        "edit_prompt",
+        "edited_image"
     ],
     "20m": [
         "original_image",
