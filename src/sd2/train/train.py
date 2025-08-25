@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 import datasets
-from peft import LoraConfig
+from peft import LoraConfig, get_peft_model
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -173,16 +173,7 @@ def train():
             torch_dtype=TORCH_DTYPE_MAPPING[args.mixed_precision]
         )
     
-    if args.lora:
-        lora_config = LoraConfig(
-            r = 32,
-            lora_alpha=16,
-            lora_dropout=0.0,
-            target_modules=["to_q","to_k","to_v","to_out.0"],
-            inference_mode=False
-        )
-        unet.add_adapter(lora_config, adapter_name='quantizator')
-        logger.info("Enable LoRA traning")
+    
     
 
 
@@ -207,6 +198,21 @@ def train():
         new_conv_in.weight[:, :4, :, :].copy_(unet.conv_in.weight)
         unet.conv_in = new_conv_in
 
+
+    if args.lora:
+        lora_config = LoraConfig(
+            r = 32,
+            lora_alpha=16,
+            lora_dropout=0.0,
+            target_modules=["to_q","to_k","to_v","to_out.0"],
+            inference_mode=False
+        )
+
+        unet = get_peft_model(unet, lora_config)
+        #unet.add_adapter(lora_config, adapter_name='quantizator')
+        tr, p = unet.get_nb_trainable_parameters()
+        logger.info("number of trainable parameters: %d|%d (%f)", tr,p, 100*(tr/p))
+        
     # Create EMA for the unet.
     if use_ema:
         ema = EMAModel(unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config)
@@ -657,6 +663,7 @@ def train():
 
             ### BEGIN: Perform validation every `validation_epochs` steps
             if global_step % round(len(train_dataset)/(total_batch_size)) == 0 and args.validation_steps != 0 and val:
+                unet.eval()
                 logger.info("Perform validation %d steps", global_step)
                 if (args.val_image_url_or_path is not None) and (args.validation_prompt is not None):
                     # create pipeline
@@ -702,6 +709,7 @@ def train():
                     torch.cuda.empty_cache()
                 # disable validation untill next global_step not occure
                 val = False
+                unet.train()
             ### END: Perform validation every `validation_epochs` steps
         # end step
         
@@ -719,6 +727,7 @@ def train():
     if use_ema:
         ema.copy_to(unet.parameters())
 
+    unet.eval()
     pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         unet=unwrap_model(unet, accelerator),
