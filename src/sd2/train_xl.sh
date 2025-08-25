@@ -2,7 +2,7 @@
 
 # note
 # - utilizzare modello compatibili con la libreria diffusers con struttura [model_name]/vae/ e [model_name]/unet/ 
-accelerate launch train/train.py \
+accelerate launch train_xl/train.py \
     --pretrained_model_name_or_path=stabilityai/stable-diffusion-xl-base-1.0 \
     --num_train_epochs=5 \
     --dataset_path=toyset \
