@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from transformers import AutoTokenizer, PretrainedConfig
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.utils.loading_utils import load_image
+from peft import PeftModel
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from transformers import CLIPProcessor, CLIPModel
 from pathlib import Path
@@ -129,27 +130,48 @@ class CLIP_Score:
         
         
         
-    def process(self, prompt, image):
-        return self.clip_processor(text=prompt, images=image, return_tensors="pt", padding=True)
+    def process(self, prompt, image, image_ref=None):
+        ref = None
+        if image_ref:
+            ref = self.clip_processor(text=None, images=image_ref, return_tensors="pt")
+        return [self.clip_processor(text=prompt, images=image, return_tensors="pt", padding=True), ref]
     
     
-    def compute_clip_emb(self, prompt, image):
+    def compute_clip_emb(self, prompt, image, image_ref=None):
 
         if isinstance(image, (str, Path)):
             image = PIL.Image.open(image)
         self.clip_model = self.clip_model.to(self.device, dtype=self.dtype)
 
+        processed, ref = self.process(prompt, image)
         with torch.no_grad():
-            output = self.clip_model(**self.process(prompt, image), return_dict=True)
-        return {
-            "txt_emb": output["text_embeds"], 
-            "img_emb": output["image_embeds"]
-        }
+            output = self.clip_model(**processed, return_dict=True)
+        
+        if image_ref and ref:
+            ref = self.clip_model.vision_model(ref)
+            return {
+                "txt_emb": output["text_embeds"], 
+                "img_emb": output["image_embeds"],
+                "ref_emb": ref 
+            }
+        else:
+            return {
+                "txt_emb": output["text_embeds"], 
+                "img_emb": output["image_embeds"],
+            }
     
-    def score(self, prompt, image):
+    def score(self, prompt, image, image_ref=None):
         embs = self.compute_clip_emb(prompt, image)
-        return max(0.0, (100*torch.cosine_similarity(embs["img_emb"], embs["txt_emb"])).item())
+        c_vs_i = max(0.0, (100*torch.cosine_similarity(embs["img_emb"], embs["txt_emb"])).item())
+        i_vs_i = 0
 
+        if image_ref:
+            i_vs_i = max(0.0, (100*torch.cosine_similarity(embs["img_emb"], embs["ref_emb"])).item())
+            score = (c_vs_i + i_vs_i)/2
+        else:
+            score = c_vs_i
+        
+        return score
 def preprocess_images(examples, resolution, original_image_column, edited_image_column, transforms_callable=None):
         original_images = np.concatenate(
             [convert_to_np(image, resolution) for image in examples[original_image_column]]
@@ -163,23 +185,6 @@ def preprocess_images(examples, resolution, original_image_column, edited_image_
         images = torch.tensor(images)
         images = 2 * (images / 255) - 1
         return transforms_callable(images) if transforms_callable else images
-
-def compute_null_conditioning(tokenizers, text_encoders, accelerator):
-    null_conditioning_list = []
-    for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
-        tokens = tokenize_captions([""], tokenizer=a_tokenizer).to(a_text_encoder.device)
-        
-        # Passa i token al text encoder
-        ids = a_text_encoder(
-            tokens,
-            output_hidden_states=True,
-        ).hidden_states[-2]  # shape: [1, seq_len, hidden_dim]
-
-        null_conditioning_list.append(ids)
-
-    
-    return torch.cat(null_conditioning_list, dim=-1).to(accelerator.device)  # shape: [num_models, seq_len, hidden_dim]
-
 
 def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num_validation_images, accelerator, generator, global_step, clip_metric=None):
     """Generate validation sample on single imageusing given pipline (trained model + preprocessing operations)"""
@@ -203,14 +208,16 @@ def log_validation(logger, image_path, validation_prompt, out_dir, pipeline, num
     with autocast_ctx:
         # Run inference
         for val_img_idx in range(num_validation_images): # attempts generation 
-            p = random.uniform(0.5, 0.8)
+            #pi = random.uniform(5, 9)
+            #pp = random.uniform(5, 9)
+            #logger.info("prompt scale:%d", pp)
+            #logger.info("image scale:%d", pi)
             a_val_img = pipeline(
                 validation_prompt,
                 image=original_image,
-                strength=p,
                 num_inference_steps = 40,
-                image_guidance_scale = 1.5,
-                guidance_scale = 3,
+                image_guidance_scale=1.5,
+                guidance_scale=7,
                 generator=generator,
             ).images[0]
            

@@ -43,6 +43,12 @@ def parse_args():
         action="store_true",
         help="Enable aggresive quantization for traning"
     )
+    parser.add_argument(
+        "--compile",
+        required=False,
+        action="store_true",
+        help="compile trainable compoments for extra velocity"
+    )
 
     parser.add_argument(
         "--num_encoders",

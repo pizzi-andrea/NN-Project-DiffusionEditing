@@ -7,7 +7,7 @@ from tqdm.auto import tqdm
 import torch
 import PIL
 class Pix2Pix_Validator:
-    def __init__(self,  pipline_weights:Path|str, out_dir:Path|str, device:str='cpu', dtype=torch.bfloat16) -> None:
+    def __init__(self,  pipline_weights:Path|str, out_dir:Path|str, device:str='cpu', dtype=torch.float32) -> None:
         
         self.pipline =  StableDiffusionInstructPix2PixPipeline.from_pretrained(
             pipline_weights,
@@ -31,8 +31,9 @@ class Pix2Pix_Validator:
             img = self.pipline(
                 prompt=prompt,
                 image=guidance_img,
-                num_inference_steps = 100,
-                prompt_guidance=prompt_guidance,
+                num_inference_steps = 40,
+                #prompt_guidance=prompt_guidance,
+                
                 image_guidance_scale=image_guidance,
                
                 

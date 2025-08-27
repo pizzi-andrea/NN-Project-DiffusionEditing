@@ -27,6 +27,7 @@ from pathlib import Path
 
 import datasets
 from peft import LoraConfig, get_peft_model
+from diffusers.models.attention_processor import AttnProcessor2_0
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,7 +49,7 @@ from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_instruct_pix2pix import StableDiffusionInstructPix2PixPipeline
 
 from diffusers.training_utils import EMAModel
-from train_utils import compute_embeddings_for_prompts, compute_null_conditioning, load_model_hook, log_validation, preprocess_images, unwrap_model, instance_txt_encoder, CLIP_Score
+from train_utils import load_model_hook, log_validation, preprocess_images, unwrap_model, instance_txt_encoder, CLIP_Score, tokenize_captions
 from args_parser import parse_args
 from datasets import load_from_disk
 
@@ -94,7 +95,7 @@ def train():
 
     
     args = parse_args()
-
+    
     # log configuration
     out_dir = Path(args.output_dir)
     log_dir = Path(args.logging_dir)
@@ -170,7 +171,7 @@ def train():
 
     unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet",
-            torch_dtype=TORCH_DTYPE_MAPPING[args.mixed_precision]
+            
         )
     
     
@@ -217,6 +218,15 @@ def train():
     if use_ema:
         ema = EMAModel(unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config)
 
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+    unet.enable_gradient_checkpointing()
+    if args.compile:
+        #unet.set_attn_processor(AttnProcessor2_0())
+        # (Opzionale) gradient checkpointing: spesso compatibile e utile
+        
+        # max-autotune
+        unet = torch.compile(unet, mode="max-autotune-no-cudagraphs", fullgraph=True)
 
     def save_model_hook(models, weights, output_dir):
             if use_ema:
@@ -270,9 +280,9 @@ def train():
     if not dataset_columns:
         raise ValueError("Unknow dataset schema")
     
-    original_image_column = dataset_columns[0] 
-    edit_prompt_column = dataset_columns[1] 
-    edited_image_column = dataset_columns[2] 
+    original_image_column = "original_image" 
+    edit_prompt_column = "edit_prompt"
+    edited_image_column = "edited_image" 
    
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -352,7 +362,7 @@ def train():
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
-    add_time_ids = compute_time_ids()
+    #add_time_ids = compute_time_ids()
 
     def _preprocess_train(accelerator, examples, resolution, original_image_column, edited_image_column, edit_prompt_column, text_encoders, tokenizers, callable_for_images=None):
         # Preprocess images.
@@ -370,9 +380,8 @@ def train():
 
         # Preprocess the captions.
         captions = list(examples[edit_prompt_column]) # get captions
-        prompt_embeds_all, add_text_embeds_all = compute_embeddings_for_prompts(accelerator, captions, text_encoders, tokenizers) # embeddings
-        examples["prompt_embeds"] = prompt_embeds_all
-        examples["add_text_embeds"] = add_text_embeds_all
+        token_ids = tokenize_captions(captions, tokenizers[0]) # embeddings
+        examples["input_ids"] = token_ids
         return examples
     
     def preprocess_train(examples):
@@ -392,12 +401,12 @@ def train():
         edited_pixel_values = torch.stack([example["edited_pixel_values"] for example in examples])
         edited_pixel_values = edited_pixel_values.to(memory_format=torch.contiguous_format).float()
         
-        prompt_embeds = torch.concat([example["prompt_embeds"] for example in examples], dim=0)
+        input_ids = torch.stack([example["input_ids"] for example in examples])
         #add_text_embeds = torch.concat([example["add_text_embeds"] for example in examples], dim=0)
         return {
             "original_pixel_values": original_pixel_values,
             "edited_pixel_values": edited_pixel_values,
-            "prompt_embeds": prompt_embeds,
+            "input_ids": input_ids,
             #"add_text_embeds": add_text_embeds,
         }
 
@@ -417,6 +426,9 @@ def train():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
+    args.learning_rate = (
+            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size
+    )
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
@@ -516,6 +528,7 @@ def train():
         train_loss = 0.0
         logger.info("start epoch %d", epoch)
         for step, batch in enumerate(train_dataloader):
+            
             with accelerator.accumulate(unet):
                 # We want to learn the denoising process w.r.t the edited images which
                 # are conditioned on the original image (which was edited) and the edit instruction.
@@ -538,7 +551,7 @@ def train():
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # SDXL additional inputs
-                encoder_hidden_states = batch["prompt_embeds"]
+                encoder_hidden_states =  text_encoders[0](batch["input_ids"])[0]
                 #add_text_embeds = batch["add_text_embeds"]
 
                 # Get the additional image embedding for conditioning.
@@ -554,13 +567,12 @@ def train():
                 
                 
                 if args.conditioning_dropout_prob is not None:
-                    #logger.info("conditional dropout enabled")
-                    null_conditioning = compute_null_conditioning(tokenizers, text_encoders, accelerator)
                     random_p = torch.rand(bsz, device=latents.device, generator=generator)
                     # Sample masks for the edit prompts.
                     prompt_mask = random_p < 2 * args.conditioning_dropout_prob
                     prompt_mask = prompt_mask.reshape(bsz, 1, 1)
                     # Final text conditioning.
+                    null_conditioning = text_encoders[0](tokenize_captions([""], tokenizers[0]).to(accelerator.device))[0]
                     encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
 
                     # Sample masks for the original images.
@@ -588,24 +600,25 @@ def train():
 
                 # Predict the noise residual and compute loss
                 
-                added_cond_kwargs = {"time_ids": add_time_ids}
+                #added_cond_kwargs = {"time_ids": add_time_ids}
                 #added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
                
-               
+                
                 model_pred = unet(
                     concatenated_noisy_latents,
                     timesteps,
                     encoder_hidden_states,
-                    added_cond_kwargs=added_cond_kwargs,
+                    #added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
 
                 )[0]
+                
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 
 
                 # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = loss.mean()
-                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+                # avg_loss = loss.mean()
+                train_loss += loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
                 accelerator.backward(loss)
@@ -621,8 +634,8 @@ def train():
                     ema.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
-                val = True # enable validation when update global_step is update 
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                val = True
                 history_loss.append(train_loss)
                 epoch_loss.append(train_loss)
                 train_loss = 0.0
@@ -676,11 +689,11 @@ def train():
                     pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(unet, accelerator),
-                        text_encoder=text_encoders[0],
+                        text_encoder=unwrap_model(text_encoders[0], accelerator),
                         #text_encoder_2=text_encoders[1],
-                        tokenizer=tokenizers[0],
+                        #tokenizer=tokenizers[0],
                         #tokenizer_2=tokenizers[1],
-                        vae=vae,
+                        vae=unwrap_model(vae, accelerator),
                         torch_dtype=weight_dtype,
                         safety_checker=None
                     )
@@ -729,15 +742,15 @@ def train():
 
     unet.eval()
     pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
-        args.pretrained_model_name_or_path,
-        unet=unwrap_model(unet, accelerator),
-        text_encoder=text_encoders[0],
-        #text_encoder_2=text_encoders[1],
-        tokenizer=tokenizers[0],
-        #tokenizer_2=tokenizers[1],
-        vae=vae,
-        torch_dtype=weight_dtype,
-        safety_checker=None
+                        args.pretrained_model_name_or_path,
+                        unet=unwrap_model(unet, accelerator),
+                        text_encoder=unwrap_model(text_encoders[0], accelerator),
+                        #text_encoder_2=text_encoders[1],
+                        #tokenizer=tokenizers[0],
+                        #tokenizer_2=tokenizers[1],
+                        vae=unwrap_model(vae, accelerator),
+                        torch_dtype=weight_dtype,
+                        safety_checker=None
     )
 
     pipeline.save_pretrained(out_dir)
